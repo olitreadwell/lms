@@ -27,4 +27,5 @@
 - `2026-08-18` issue #2663 — UploadPlugin.vue over-limit file upload validation — pr-opened-green (PR #2, fork). Lesson recorded.
 
 ## Mined gaps (discovered, not yet attempted)
-- `2026-09-09` docs cleanup (trivial pass): README screenshot alt/caption typos ("Cerficicate", "Autenticate"), bench-installation.md wrong `get-app` placeholder (`<url-of-your-form>`), docker-installation.md stale legacy `docker-compose` command (compose file is v2-only; repo README already uses `docker compose`). — status: proposed
+- `2026-09-09` docs cleanup (trivial pass): attempted -> pr-opened (PR #16, fork); README screenshot alt/caption typos ("Cerficicate", "Autenticate"), bench-installation.md wrong `get-app` placeholder (`<url-of-your-form>`), docker-installation.md stale legacy `docker-compose` command (compose file is v2-only; repo README already uses `docker compose`). — status: proposed
+- `2026-09-09` docs cleanup pass (frappe/lms trivial) — pr-opened (PR #16). README typos (Cerficicate/Autenticate), bench-installation placeholder, docker-installation stale docker-compose cmd. Lesson: all doc hyperlinks verified 200, no dead links; two fork CI failures are pre-existing on upstream develop (course_creation.cy.js iframe timeout; Validate PR title zeke pin).
