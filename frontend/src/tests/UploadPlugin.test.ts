@@ -22,6 +22,38 @@ const mountPlugin = (uploadContext: any) =>
 const args = (wrapper: any) =>
 	wrapper.findComponent({ name: 'FileUploader' }).props('uploadArgs')
 
+describe('UploadPlugin: validateFile', () => {
+	const validate = (wrapper: any) =>
+		wrapper.findComponent({ name: 'FileUploader' }).props('validateFile')
+
+	it('rejects files over the 25 MB upload limit with a clear message', () => {
+		const wrapper = mountPlugin({ docname: null, fieldname: 'content' })
+		const error = validate(wrapper)({
+			name: 'lesson.mp4',
+			size: 26 * 1024 * 1024,
+		})
+		expect(error).toMatch(/25 MB/)
+	})
+
+	it('allows files at exactly the 25 MB limit', () => {
+		const wrapper = mountPlugin({ docname: null, fieldname: 'content' })
+		const error = validate(wrapper)({
+			name: 'lesson.mp4',
+			size: 25 * 1024 * 1024,
+		})
+		expect(error).toBeUndefined()
+	})
+
+	it('still rejects unsupported extensions', () => {
+		const wrapper = mountPlugin({ docname: null, fieldname: 'content' })
+		const error = validate(wrapper)({
+			name: 'lesson.exe',
+			size: 1024,
+		})
+		expect(error).toMatch(/Only image and video files are allowed/)
+	})
+})
+
 describe('UploadPlugin: uploadArgs', () => {
 	it('omits doctype/docname when the lesson has no docname yet', () => {
 		const wrapper = mountPlugin({ docname: null, fieldname: 'content' })
