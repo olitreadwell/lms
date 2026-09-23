@@ -1,5 +1,5 @@
 # frappe/lms context
-> refreshed 2026-09-09 | upstream default: develop @ f4f546b6
+> refreshed 2026-09-24 | upstream default: develop @ 5d33bcc
 
 ## Identity & policies
 - upstream: frappe/lms, default branch `develop`, primary language Vue (Frappe/Python app), English-first (yes; README/docs/UI strings all English).
@@ -25,6 +25,7 @@
 
 ## Gap ledger (dedupe — READ FIRST, never re-pick)
 - `2026-08-18` issue #2663 — UploadPlugin.vue over-limit file upload validation — pr-opened-green (PR #2, fork). Lesson recorded.
+- `2026-09-24` issue #2717 — AudioBlock.vue detached-mount crash (document.querySelector null + cross-block scoping) — pr-opened (PR #33, fork). Verified: test reproduced the crash on develop before the fix, green after; two regression tests added (AudioBlock.test.ts).
 
 ## Mined gaps (discovered, not yet attempted)
 - `2026-09-09` docs cleanup (trivial pass): attempted -> pr-opened (PR #16, fork); README screenshot alt/caption typos ("Cerficicate", "Autenticate"), bench-installation.md wrong `get-app` placeholder (`<url-of-your-form>`), docker-installation.md stale legacy `docker-compose` command (compose file is v2-only; repo README already uses `docker compose`). — status: proposed
