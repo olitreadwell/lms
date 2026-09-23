@@ -58,10 +58,10 @@ In 2021, we were looking for a Learning Management System to launch [Mon.School]
 <br>
 
 
-![Cerficicate](.github/certificate.png)
+![Certificate](.github/certificate.png)
 <div align="center">
 	<sub>
-		Autenticate their work with certification
+		Authenticate their work with certification
 	</sub>
 </div>
 </details>
@@ -126,7 +126,7 @@ The script will set up a production-ready instance of Frappe Learning with all t
 
 ### Docker
 
-You need Docker, docker-compose and git setup on your machine. Refer [Docker documentation](https://docs.docker.com/). After that, follow below steps:
+You need Docker, docker compose and git setup on your machine. Refer [Docker documentation](https://docs.docker.com/). After that, follow below steps:
 
 **Step 1**: Setup folder and download the required files
 
