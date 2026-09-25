@@ -92,7 +92,7 @@ class MacroExtension(Extension):
 
 class MacroInlineProcessor(InlineProcessor):
 	"""MacroInlineProcessor is class that is handles the logic
-	of how to render each macro occurence in the markdown text.
+	of how to render each macro occurrence in the markdown text.
 	"""
 
 	def handleMatch(self, m, data):
