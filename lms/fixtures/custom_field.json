@@ -365,7 +365,7 @@
   "insert_after": "linkedin",
   "is_system_generated": 1,
   "is_virtual": 0,
-  "label": "Github ID",
+  "label": "GitHub ID",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,

@@ -1045,7 +1045,7 @@ def apply_gst(amount: float, country: str = None) -> tuple:
 
 
 def get_current_exchange_rate(source: str, target: str = "USD") -> float:
-	url = f"https://api.frankfurter.app/latest?from={source}&to={target}"
+	url = f"https://api.frankfurter.dev/v1/latest?from={source}&to={target}"
 
 	response = requests.request("GET", url)
 	details = response.json()
