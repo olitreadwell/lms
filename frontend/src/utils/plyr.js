@@ -54,6 +54,27 @@ const setupPlyrForVideo = (video, players) => {
 		controls: controls,
 		settings: ['speed'],
 		speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
+		// Plyr ships its own English strings for the control tooltips, the seek
+		// bar's screen-reader text and the settings menu, independent of the
+		// site catalog. Only the controls enabled above are listed, so the
+		// player reads in the learner's language instead of always English.
+		i18n: {
+			play: __('Play'),
+			pause: __('Pause'),
+			mute: __('Mute'),
+			unmute: __('Unmute'),
+			seek: __('Seek'),
+			seekLabel: __('{currentTime} of {duration}'),
+			currentTime: __('Current time'),
+			duration: __('Duration'),
+			volume: __('Volume'),
+			settings: __('Settings'),
+			speed: __('Speed'),
+			normal: __('Normal'),
+			menuBack: __('Go back to previous menu'),
+			enterFullscreen: __('Enter fullscreen'),
+			exitFullscreen: __('Exit fullscreen'),
+		},
 		listeners: {
 			seek: function customSeekBehavior(e) {
 				const current_time = player.currentTime
