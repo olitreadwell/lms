@@ -32,7 +32,7 @@ In 2021, we were looking for a Learning Management System to launch [Mon.School]
 
 - **Live Classes**: Group learners into batches based on courses and duration. You can then create Zoom live class for these batches right from the app. Learners get to see the list of live classes they have to take as a part of this batch.
 
-- **Quizzes and Assignments**: Create quizzes where questions can have single-choice, multiple-choice options, or can be open ended. Instructors can also add assignments which learners can submit as PDF's or Documents.
+- **Quizzes and Assignments**: Create quizzes where questions can have single-choice, multiple-choice options, or can be open ended. Instructors can also add assignments which learners can submit as PDFs or Documents.
 
 - **Getting Certified**: Once a learner has completed the course or batch, you can grant them a certificate. The app provides an inbuilt certificate template. You can use this or else create a template of your own and use that instead.
 
@@ -58,10 +58,10 @@ In 2021, we were looking for a Learning Management System to launch [Mon.School]
 <br>
 
 
-![Cerficicate](.github/certificate.png)
+![Certificate](.github/certificate.png)
 <div align="center">
 	<sub>
-		Autenticate their work with certification
+		Authenticate their work with certification
 	</sub>
 </div>
 </details>
@@ -126,7 +126,7 @@ The script will set up a production-ready instance of Frappe Learning with all t
 
 ### Docker
 
-You need Docker, docker-compose and git setup on your machine. Refer [Docker documentation](https://docs.docker.com/). After that, follow below steps:
+You need Docker, docker compose and git setup on your machine. Refer [Docker documentation](https://docs.docker.com/). After that, follow below steps:
 
 **Step 1**: Setup folder and download the required files
 
