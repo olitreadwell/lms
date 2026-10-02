@@ -283,7 +283,7 @@ const validateFormFields = () => {
 	if (!liveClass.timezone) {
 		return __('Please select a timezone.')
 	}
-	if (!valideTime()) {
+	if (!validTime()) {
 		return __('Please enter a valid time in the format HH:mm.')
 	}
 	const liveClassDateTime = dayjs(`${liveClass.date}T${liveClass.time}`).tz(
@@ -303,7 +303,7 @@ const validateFormFields = () => {
 	}
 }
 
-const valideTime = () => {
+const validTime = () => {
 	let time = liveClass.time.split(':')
 	if (time.length != 2) {
 		return false

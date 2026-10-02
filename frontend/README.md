@@ -9,7 +9,7 @@ the box.
 ## Usage
 
 This template is meant to be cloned inside an existing Frappe App. Assuming your
-apps name is `todo`. Clone this template in the root folder of your app using `degit`.
+app's name is `todo`. Clone this template in the root folder of your app using `degit`.
 
 ```
 cd apps/todo
