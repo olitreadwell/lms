@@ -303,7 +303,7 @@ extend_bootinfo = [
 # profile_tabs = []
 
 ## Specify the extension to be used to control what scripts and stylesheets
-## to be included in lesson pages. The specified value must be be a
+## to be included in lesson pages. The specified value must be a
 ## subclass of lms.plugins.PageExtension
 # lms_lesson_page_extension = None
 
