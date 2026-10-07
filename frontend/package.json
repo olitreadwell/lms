@@ -29,7 +29,7 @@
     "@headlessui/vue": "1.7.23",
     "@vueuse/core": "^14.1.0",
     "dayjs": "1.11.10",
-    "dompurify": "3.2.6",
+    "dompurify": "3.4.16",
     "echarts": "^6.1.0",
     "editorjs-drag-drop": "1.1.16",
     "face-api.js": "^0.22.2",
