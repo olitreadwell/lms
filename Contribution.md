@@ -4,4 +4,4 @@
 1. Make your proposed changes to the source
 1. Run your local version (e.g. bench start in your bench installation). Make sure that your changes work the way you want them to.
 1. Commit your changes to your branch. Make sure to use a semantic commit message.
-1. Push your branch to your fork on Github, and issue a pull request.
+1. Push your branch to your fork on GitHub, and issue a pull request.
