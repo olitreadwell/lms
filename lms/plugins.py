@@ -10,7 +10,7 @@ This module exposes two plugins: ProfileTab and PageExtension.
 The ProfileTab is used to specify any additional tabs to be displayed
 on the profile page of the user.
 
-The PageExtension is used to load additinal stylesheets and scripts to
+The PageExtension is used to load additional stylesheets and scripts to
 be loaded in a webpage.
 """
 

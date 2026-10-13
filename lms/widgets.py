@@ -1,7 +1,7 @@
 """The widgets provides access to HTML widgets
 provided in each frappe module.
 
-Widgets are simple moduler templates that can reused
+Widgets are simple modular templates that can reused
 in multiple places. These are like macros, but accessing
 them will be a lot easier.
 

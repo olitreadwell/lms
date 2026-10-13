@@ -400,7 +400,7 @@ export const services: EmailService[] = [
 		info: __(
 			`Any IMAP/POP3 and SMTP server your provider gives you the host and port for. Read more`
 		),
-		link: 'https://docs.frappe.io/framework/user/en/setting-up-email',
+		link: 'https://docs.frappe.io/erpnext/user/manual/en/email-account',
 		custom: true,
 	},
 ]

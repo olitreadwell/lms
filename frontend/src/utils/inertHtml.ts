@@ -6,7 +6,7 @@
 //
 // They live together in their own module because decodeEntities is the one place
 // in the app that assigns innerHTML from a value on purpose, and the innerHTML
-// gate in tests/htmlSinkSafety.test.ts exempts this path — an exemption is only
+// gate in tests/innerHtmlSinks.test.ts exempts this path — an exemption is only
 // honest when it covers nothing else.
 
 const inert = (html: string): Document =>

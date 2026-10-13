@@ -9,7 +9,7 @@ the box.
 ## Usage
 
 This template is meant to be cloned inside an existing Frappe App. Assuming your
-apps name is `todo`. Clone this template in the root folder of your app using `degit`.
+app's name is `todo`. Clone this template in the root folder of your app using `degit`.
 
 ```
 cd apps/todo
@@ -35,8 +35,8 @@ To change this, open `src/router.js` and change the base URL passed to `createWe
 
 ## Resources
 
-- [Vue 3](https://v3.vuejs.org/guide/introduction.html)
-- [Vue Router](https://next.router.vuejs.org/guide/)
+- [Vue 3](https://vuejs.org/guide/introduction.html)
+- [Vue Router](https://router.vuejs.org/guide/)
 - [Frappe UI](https://github.com/frappe/frappe-ui)
 - [TailwindCSS](https://tailwindcss.com/docs/utility-first)
-- [Vite](https://vitejs.dev/guide/)
+- [Vite](https://vite.dev/guide/)
