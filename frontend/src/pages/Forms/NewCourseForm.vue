@@ -201,7 +201,7 @@ type Course = {
 	description: string
 	instructors: string[]
 	category?: string
-	image?: string
+	image: string | null
 }
 
 const course = ref<Course>({
@@ -210,7 +210,7 @@ const course = ref<Course>({
 	description: '',
 	instructors: [],
 	category: undefined,
-	image: undefined,
+	image: null,
 })
 
 const INSTRUCTOR_ROLES = ['Course Creator', 'Batch Evaluator']
@@ -335,7 +335,6 @@ const saveCourse = () => {
 		{
 			onSuccess(data: any) {
 				toast.success(__('Course created successfully'))
-				capture('course_created')
 				courseCreated.value = true
 				// replace, not push: the form's history entry is consumed so Back
 				// reaches the list rather than a stale, empty form.
