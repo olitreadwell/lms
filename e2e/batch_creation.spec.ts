@@ -78,17 +78,17 @@ test.describe("Batch Creation", () => {
 		await page.locator(`[id="${roleForId}"]`).click();
 
 		// The member form is its own route now (MemberForm.vue), rendered as a
-		// second dialog on top of the settings one, and its submit says "Save".
+		// second dialog on top of the settings one, and its submit says "Create".
 		// Two stacked dismissable layers make a label search ambiguous, so go
 		// by the form's own test id.
-		const userInsert = waitForApiCall(page, "/api/method/frappe.client.insert");
+		const memberAdd = waitForApiCall(page, "/api/method/lms.lms.api.add_member");
 		const saveRole = waitForApiCall(page, "/api/method/lms.lms.api.save_role");
 		await page.getByTestId("member-save").click();
-		await userInsert;
+		await memberAdd;
 		await saveRole;
 
 		// Modal closes on success
-		await expect(page.getByText("Add New Member")).toHaveCount(0);
+		await expect(page.getByText("New Member", { exact: true })).toHaveCount(0);
 
 		// Filter by Evaluator role to verify
 		await page
@@ -123,20 +123,16 @@ test.describe("Batch Creation", () => {
 			.click();
 		await fillMemberField(page, "Email", randomStudent);
 		await fillMemberField(page, "First Name", "Student");
-		const studentInsert = waitForApiCall(
-			page,
-			"/api/method/frappe.client.insert"
-		);
+		const studentAdd = waitForApiCall(page, "/api/method/lms.lms.api.add_member");
 		await page.getByTestId("member-save").click();
-		await studentInsert;
-		await expect(page.getByText("Add New Member")).toHaveCount(0);
+		await studentAdd;
+		await expect(page.getByText("New Member", { exact: true })).toHaveCount(0);
 
 		// Back to the batch list to create the batch.
 		await page.goto("/lms/batches");
 
 		// Create batch
-		await button(page, "Create").click();
-		await page.getByRole("menuitem", { name: "New Batch" }).click();
+		await button(page, "New Batch").click();
 
 		const field = (label: string) =>
 			page.locator("label").filter({ hasText: label }).locator("xpath=..");
@@ -185,7 +181,7 @@ test.describe("Batch Creation", () => {
 		await instructorOption.first().click();
 		await page.keyboard.press("Escape");
 
-		await button(page, "Save").click();
+		await page.getByTestId("new-batch-save").click();
 
 		// Verify redirect to settings
 		await expect(page).toHaveURL(/#settings/, { timeout: 10000 });
@@ -259,8 +255,8 @@ test.describe("Batch Creation", () => {
 		// See course_creation.spec.ts's instructor-search click for why this
 		// needs the combined find+actionability budget, not just the find half.
 		await page.locator("[data-slot=item]").first().click({ timeout: 30000 });
-		// Enrolling is a form route now (BatchStudentForm.vue) and every form
-		// in the shell submits with "Save".
+		// Enrolling is a form route now (BatchStudentForm.vue), and its submit
+		// says "Enroll".
 		await page.getByTestId("batch-student-save").click();
 
 		// Enrolling takes a seat. BatchOverview renders BatchOverlay twice for
