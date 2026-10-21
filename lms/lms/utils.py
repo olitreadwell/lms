@@ -1135,7 +1135,7 @@ def prepare_inline_images(html: str | None) -> tuple[str, list[dict]]:
 				)
 			)
 
-		content = file.get_content()
+		content = read_file_bytes(file)
 		total_bytes += len(content)
 		if total_bytes > MAX_INLINE_IMAGE_BYTES:
 			frappe.throw(
@@ -1149,6 +1149,15 @@ def prepare_inline_images(html: str | None) -> tuple[str, list[dict]]:
 		inline_images.append({"filename": file.file_url, "filecontent": content})
 
 	return str(soup), inline_images
+
+
+def read_file_bytes(file: Document) -> bytes:
+	"""The file's bytes as stored. File.get_content on version-16 returns most images and
+	PDFs as str, because it tries windows-1250 on any content that is not UTF-8."""
+	file.validate_file_path()
+	# nosemgrep: frappe-security-file-traversal - validate_file_path keeps the path inside the site's files folders
+	with open(file.get_full_path(), "rb") as f:
+		return f.read()
 
 
 def get_readable_files(file_urls: list[str]) -> dict:
@@ -1204,16 +1213,19 @@ def attach_file_to_doc(file_url: str, doctype: str, docname: str) -> None:
 	if frappe.db.exists("File", filters):
 		return
 
-	# A student cannot create a File row against a Communication they do not own.
-	# nosemgrep: lms-unjustified-ignore-permissions - prepare_inline_images already checked has_permission on this file
-	frappe.get_doc(
+	file = frappe.get_doc(
 		{
 			"doctype": "File",
 			"file_url": file_url,
 			"is_private": 1 if file_url.startswith("/private/") else 0,
 			**filters,
 		}
-	).insert(ignore_permissions=True)
+	)
+	# Without it version-16 re-reads the image as text and writes a copy under a new url.
+	file.flags.copy_from_existing_file = True
+	# A student cannot create a File row against a Communication they do not own.
+	# nosemgrep: lms-unjustified-ignore-permissions - prepare_inline_images already checked has_permission on this file
+	file.insert(ignore_permissions=True)
 
 
 def check_multicurrency(amount: float, currency: str, country: str = None, amount_usd: float = None):
@@ -1809,9 +1821,6 @@ def get_outline_lessons(chapter_names: list) -> list:
 			CourseLesson.include_in_preview.as_("include_in_preview"),
 			CourseLesson.body.as_("body"),
 			CourseLesson.content.as_("content"),
-			CourseLesson.youtube.as_("youtube"),
-			CourseLesson.quiz_id.as_("quiz_id"),
-			CourseLesson.question.as_("question"),
 			CourseLesson.file_type.as_("file_type"),
 			CourseLesson.course.as_("course"),
 			CourseLesson.chapter.as_("chapter"),
@@ -1921,6 +1930,8 @@ def build_outline(
 	progress: bool,
 	enforce_completion: bool = False,
 ) -> list:
+	# The outline is the course sidebar: titles, order and icons. Lesson content
+	# (video, quiz, question) belongs to get_lesson, which checks who may open it.
 	chapter_idx_by_name = {c.name: c.idx for c in chapters}
 	lessons_by_chapter = {}
 	for lr in lesson_rows:
@@ -1929,9 +1940,6 @@ def build_outline(
 			title=lr.title,
 			include_in_preview=lr.include_in_preview,
 			icon=get_lesson_icon(lr.body, lr.content),
-			youtube=lr.youtube,
-			quiz_id=lr.quiz_id,
-			question=lr.question,
 			file_type=lr.file_type,
 			course=lr.course,
 			chapter=lr.chapter,
@@ -1947,9 +1955,6 @@ def build_outline(
 		for lessons in lessons_by_chapter.values():
 			for lesson in lessons:
 				lesson.locked = 1 if lesson.name in locked else 0
-				if lesson.locked:
-					# The quiz is part of the gated lesson, not a separate resource.
-					lesson.quiz_id = None
 
 	outline = []
 	for c in chapters:
