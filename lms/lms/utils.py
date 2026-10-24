@@ -2,8 +2,9 @@ import functools
 import hashlib
 import json
 import re
+import time
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 import frappe
@@ -28,6 +29,7 @@ from frappe.utils import (
 	get_fullname,
 	get_system_timezone,
 	get_time,
+	get_url,
 	getdate,
 	nowtime,
 	rounded,
@@ -669,6 +671,9 @@ def validate_attachable_file(doc: Document, fieldname: str) -> None:
 		)
 
 
+MAX_MENTIONS_PER_REPLY = 10
+
+
 def handle_notifications(doc: Document, method: str):
 	topic = frappe.db.get_value(
 		"Discussion Topic",
@@ -752,7 +757,7 @@ def mentioned_users(html: str) -> list[str]:
 
 
 def notify_mentions_on_portal(doc: Document, topic: dict):
-	mentions = mentioned_users(doc.reply)
+	mentions = get_mention_recipients(doc, topic)
 	if not mentions:
 		return
 
@@ -794,7 +799,7 @@ def notify_mentions_via_email(doc: Document, topic: dict):
 	if not outgoing_email_account or not frappe.conf.get("mail_login"):
 		return
 
-	mentions = mentioned_users(doc.reply)
+	mentions = get_mention_recipients(doc, topic)
 	if not mentions:
 		return
 
@@ -832,6 +837,33 @@ def notify_mentions_via_email(doc: Document, topic: dict):
 			header=[subject, "green"],
 			retry=3,
 		)
+
+
+def get_mention_recipients(doc: Document, topic: dict) -> list[str]:
+	mentions = mentioned_users(doc.reply)[:MAX_MENTIONS_PER_REPLY]
+	if not mentions:
+		return []
+	users = frappe.get_all(
+		"User", {"name": ("in", mentions), "enabled": 1, "allowed_in_mentions": 1}, pluck="name"
+	)
+	return [user for user in users if is_topic_participant(user, topic)]
+
+
+def is_topic_participant(user: str, topic: dict) -> bool:
+	from lms.lms.permissions import can_author_batch, can_author_course
+
+	if topic.reference_doctype == "Course Lesson":
+		course = frappe.db.get_value("Course Lesson", topic.reference_docname, "course")
+		return bool(
+			frappe.db.exists("LMS Enrollment", {"course": course, "member": user})
+			or can_author_course(course, user=user)
+		)
+	batch = topic.reference_docname
+	return bool(
+		frappe.db.exists("LMS Batch Enrollment", {"batch": batch, "member": user})
+		or has_evaluator_role(user)
+		or can_author_batch(batch, user=user)
+	)
 
 
 def get_lesson_count(course: str) -> int:
@@ -2485,11 +2517,11 @@ def get_batch_courses(batch: str) -> list:
 
 @frappe.whitelist()
 def get_assessments(batch: str) -> list:
-	from lms.lms.permissions import can_author_batch
+	from lms.lms.permissions import can_author_batch, evaluator_role_reads_batch
 
 	member = frappe.session.user
 	is_enrolled = frappe.db.exists("LMS Batch Enrollment", {"batch": batch, "member": member})
-	is_admin = "Batch Evaluator" in frappe.get_roles(member) or can_author_batch(batch, user=member)
+	is_admin = evaluator_role_reads_batch(batch, user=member) or can_author_batch(batch, user=member)
 	if not is_enrolled and not is_admin:
 		frappe.throw(_("You are not authorized to view the assessments of this batch."))
 
@@ -2712,9 +2744,9 @@ def get_quiz_pass_stats(batch: str) -> list:
 @frappe.whitelist()
 def get_batch_chart_data(batch: str) -> list:
 	"""Get completion counts per course and assessment"""
-	from lms.lms.permissions import can_author_batch
+	from lms.lms.permissions import can_author_batch, evaluator_role_reads_batch
 
-	if "Batch Evaluator" not in frappe.get_roles() and not can_author_batch(batch):
+	if not evaluator_role_reads_batch(batch) and not can_author_batch(batch):
 		frappe.throw(_("You are not authorized to view the chart data of this batch."))
 	if not frappe.db.exists("LMS Batch", batch):
 		frappe.throw(_("The specified batch does not exist."))
@@ -2867,12 +2899,12 @@ def can_access_topic(doctype: str, docname: str) -> bool:
 		if not is_student and not can_modify_course(course):
 			return False
 	elif doctype == "LMS Batch":
-		from lms.lms.permissions import can_author_batch
+		from lms.lms.permissions import can_author_batch, evaluator_role_reads_batch
 
 		is_student = frappe.db.exists(
 			"LMS Batch Enrollment", {"batch": docname, "member": frappe.session.user}
 		)
-		is_admin = "Batch Evaluator" in frappe.get_roles() or can_author_batch(docname)
+		is_admin = evaluator_role_reads_batch(docname) or can_author_batch(docname)
 		if not is_student and not is_admin:
 			return False
 	else:
@@ -3160,6 +3192,13 @@ def update_payment_record(doctype: str, docname: str):
 		return
 
 	try:
+		if not is_payment_for_this_checkout(data, doctype, docname):
+			return
+	except RazorpayUnavailableError:
+		queue_payment_recheck(data, doctype, docname, frappe.flags.payment_recheck or 0)
+		return
+
+	try:
 		update_payment_details(data)
 	except Exception as e:
 		if not frappe.db.is_unique_key_violation(e):
@@ -3231,6 +3270,144 @@ def payment_already_recorded(data: dict) -> bool:
 	# kept apart by the unique constraint on payment_id, which is what makes
 	# update_payment_details fail for whichever one loses.
 	return bool(frappe.db.exists("LMS Payment", {"payment_id": payment_id}))
+
+
+def is_payment_for_this_checkout(data: dict, doctype: str, docname: str) -> bool:
+	"""The callback payload is built from the Integration Request, which the
+	browser can amend, so only the LMS Payment row and the gateway's own record
+	are trusted here."""
+	payment = frappe.db.get_value(
+		"LMS Payment",
+		data.payment,
+		[
+			"name",
+			"member",
+			"payment_for_document_type",
+			"payment_for_document",
+			"currency",
+			"amount",
+			"amount_with_gst",
+		],
+		as_dict=True,
+	)
+
+	if (
+		not payment
+		or payment.member != frappe.session.user
+		or payment.payment_for_document_type != doctype
+		or payment.payment_for_document != docname
+	):
+		return refuse_payment(data, "The LMS Payment does not belong to this user and document.")
+
+	if not data.get("razorpay_payment_id") and data.get("payment_gateway") != "Razorpay":
+		return True
+
+	return verify_razorpay_payment(data, payment)
+
+
+def verify_razorpay_payment(data: dict, payment: dict) -> bool:
+	payment_id = data.get("razorpay_payment_id")
+	if not payment_id or not isinstance(payment_id, str):
+		return refuse_payment(data, "The callback carries no Razorpay payment id.")
+
+	try:
+		client = get_razorpay_client()
+		gateway_payment = frappe._dict(fetch_from_razorpay(client.payment.fetch, payment_id))
+		order = None
+		if gateway_payment.order_id:
+			order = frappe._dict(fetch_from_razorpay(client.order.fetch, gateway_payment.order_id))
+	except RazorpayUnavailableError:
+		raise
+	except Exception:
+		return refuse_payment(data, f"Razorpay lookup failed:\n{frappe.get_traceback()}")
+
+	mismatch = get_razorpay_mismatch(gateway_payment, order, payment)
+	if mismatch:
+		return refuse_payment(data, mismatch)
+
+	data.order_id = order.id
+	return True
+
+
+RAZORPAY_LOOKUP_ATTEMPTS = 3
+PAYMENT_RECHECKS = 3
+
+
+class RazorpayUnavailableError(Exception):
+	pass
+
+
+def queue_payment_recheck(data: dict, doctype: str, docname: str, recheck: int = 0):
+	"""The buyer has paid, so a lookup Razorpay could not answer is checked again
+	from a background job rather than refused."""
+	if recheck >= PAYMENT_RECHECKS:
+		refuse_payment(data, "Razorpay could not be reached to verify it. Complete it by hand.")
+		return
+	frappe.enqueue(
+		"lms.lms.utils.recheck_payment",
+		queue="long",
+		enqueue_after_commit=True,
+		data=dict(data),
+		doctype=doctype,
+		docname=docname,
+		recheck=recheck + 1,
+	)
+
+
+def recheck_payment(data: dict, doctype: str, docname: str, recheck: int):
+	time.sleep(60 * recheck)
+	frappe.flags.data = frappe._dict(data)
+	frappe.flags.payment_recheck = recheck
+	try:
+		update_payment_record(doctype, docname)
+	finally:
+		frappe.flags.data = None
+		frappe.flags.payment_recheck = None
+
+
+def fetch_from_razorpay(fetch, record_id: str) -> dict:
+	"""Retry the lookup while Razorpay is unreachable or failing on its side, so a
+	paid checkout is not refused over a blip. An unknown id is refused at once."""
+	from razorpay.errors import GatewayError, ServerError
+
+	for attempt in range(RAZORPAY_LOOKUP_ATTEMPTS):
+		try:
+			return fetch(record_id)
+		except (GatewayError, ServerError, requests.ConnectionError, requests.Timeout) as e:
+			if attempt == RAZORPAY_LOOKUP_ATTEMPTS - 1:
+				raise RazorpayUnavailableError(str(e)) from e
+			time.sleep(attempt + 1)
+
+
+def get_razorpay_client():
+	from payments.utils import get_payment_gateway_controller
+
+	controller = get_payment_gateway_controller("Razorpay")
+	controller.init_client()
+	return controller.client
+
+
+def get_razorpay_mismatch(gateway_payment: dict, order: dict | None, payment: dict) -> str | None:
+	if gateway_payment.status not in ("authorized", "captured"):
+		return f"Razorpay payment status is {gateway_payment.status}."
+
+	if not order or order.receipt != payment.name:
+		return f"Razorpay order {gateway_payment.order_id} was not created for LMS Payment {payment.name}."
+
+	if (gateway_payment.currency or "").upper() != (payment.currency or "").upper():
+		return f"Razorpay payment currency {gateway_payment.currency} does not match {payment.currency}."
+
+	expected = flt(get_payment_total(payment)) * 100
+	if abs(cint(gateway_payment.amount) - expected) >= 1:
+		return f"Razorpay payment amount {gateway_payment.amount} does not match {expected}."
+
+
+def refuse_payment(data: dict, reason: str) -> bool:
+	frappe.log_error(
+		title="Payment callback refused",
+		message=f"LMS Payment {data.get('payment')} for {frappe.session.user}: {reason}",
+	)
+	return False
 
 
 def complete_enrollment(payment_name: str, doctype: str, docname: str):
@@ -3908,7 +4085,7 @@ def sanitize_editorjs(raw):
 	"""
 	try:
 		data, _repaired = load_editorjs(raw)
-		return dump_editorjs(sanitize_json(data))
+		return dump_editorjs(drop_unsafe_embeds(sanitize_json(data)))
 	except (TypeError, ValueError, RecursionError):
 		return escape_markup(raw)
 
@@ -3963,6 +4140,39 @@ def sanitize_json(node, depth=0):
 	if isinstance(node, str) and ("<" in node or ">" in node):
 		return sanitize_html(node, always_sanitize=True)
 	return node
+
+
+# The embed tool writes `data.embed` into an iframe `src` as is.
+SAFE_EMBED_URL = re.compile(r"https?://[^\s\\\x00-\x1f\x7f]+", re.IGNORECASE)
+YOUTUBE_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def is_safe_embed(data):
+	url = data.get("embed")
+	if not isinstance(url, str):
+		return False
+	if data.get("service") == "youtube" and YOUTUBE_VIDEO_ID.fullmatch(url):
+		return True
+	if not SAFE_EMBED_URL.fullmatch(url):
+		return False
+	try:
+		host = urlsplit(url).hostname
+	except ValueError:
+		return False
+	return bool(host) and host not in {frappe.local.site, urlsplit(get_url()).hostname}
+
+
+def drop_unsafe_embeds(data):
+	"""Drop embed blocks whose iframe source is not an external http(s) URL."""
+	if not isinstance(data, dict) or not isinstance(data.get("blocks"), list):
+		return data
+	data["blocks"] = [
+		block
+		for block in data["blocks"]
+		if not (isinstance(block, dict) and block.get("type") == "embed")
+		or (isinstance(block.get("data"), dict) and is_safe_embed(block["data"]))
+	]
+	return data
 
 
 # Rows written before `content` carried `ignore_xss_filter` were mangled by nh3
