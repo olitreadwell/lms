@@ -270,6 +270,7 @@ const evaluationDetails = createResource({
 			filters: {
 				member: props.event.member,
 				course: props.event.course,
+				batch_name: props.event.batch_name || ['is', 'not set'],
 			},
 		}
 	},
@@ -332,6 +333,7 @@ const certificateDetails = createResource({
 			filters: {
 				member: props.event.member,
 				course: props.event.course,
+				batch_name: props.event.batch_name || ['is', 'not set'],
 			},
 		}
 	},
@@ -382,7 +384,7 @@ const openCertificate = (certificate) => {
 	openExternal(
 		`/api/method/frappe.utils.print_format.download_pdf?doctype=LMS+Certificate&name=${
 			certificate.name
-		}&format=${encodeURIComponent(certificate.template)}`
+		}&format=${encodeURIComponent(certificate.template)}&no_letterhead=1`
 	)
 }
 

@@ -59,7 +59,11 @@
 					v-model="activeTab"
 				/>
 			</div>
-			<router-view :profile="profile" :key="profile.data.name" />
+			<router-view
+				v-if="!awaitingEmail && !onBlockedEvaluatorTab"
+				:profile="profile"
+				:key="profile.data.username"
+			/>
 		</div>
 	</div>
 	<NotFound v-else-if="(profile.fetched || profile.error) && !profile.data" />
@@ -117,6 +121,52 @@ const profile = createResource({
 	},
 })
 
+// get_profile_details sends another user's email to no one. The moderator-only
+// tabs (Roles, Slots, Schedule) act on it, so a moderator reads it from User
+// under their own DocPerms, and the tabs wait for it.
+const resolvedEmail = ref(null)
+
+const applyResolvedEmail = () => {
+	const data = profile.data
+	if (data && !data.name && resolvedEmail.value?.username === data.username)
+		data.name = resolvedEmail.value.name
+}
+
+// A lookup can outlive a navigation to another profile, so each response is
+// bound to the username it asked about and dropped once that profile is gone.
+const settleEmail = (username, name) => {
+	if (username !== profile.data?.username) return
+	resolvedEmail.value = { username, name }
+	applyResolvedEmail()
+}
+
+const profileEmail = createResource({ url: 'frappe.client.get_value' })
+
+const awaitingEmail = computed(
+	() =>
+		Boolean($user.data?.is_moderator) &&
+		Boolean(profile.data) &&
+		!profile.data.name &&
+		resolvedEmail.value?.username !== profile.data.username
+)
+
+watch(
+	() => awaitingEmail.value && profile.data?.username,
+	(username) => {
+		if (!username) return
+		profileEmail.submit(
+			{ doctype: 'User', filters: { username }, fieldname: 'name' },
+			{
+				onSuccess: (data) => settleEmail(username, data?.name || null),
+				onError: () => settleEmail(username, null),
+			}
+		)
+	},
+	{ immediate: true }
+)
+
+watch(() => profile.data, applyResolvedEmail)
+
 const coverImage = createResource({
 	url: 'frappe.client.set_value',
 	makeParams(values) {
@@ -140,7 +190,7 @@ const setActiveTab = () => {
 			activeTab.value = convertToTitleCase(section)
 		}
 	})
-	if (!activeTab.value) activeTab.value = 'About'
+	if (!activeTab.value || onBlockedEvaluatorTab.value) activeTab.value = 'About'
 }
 
 // The edit form is a child route, not a tab, and `edit` matches none of the tab
@@ -160,7 +210,8 @@ watchEffect(() => {
 	// push carries no hash. That took '#settings/<slug>' straight back off the
 	// URL, so settings never opened on this page.
 	if (!target || route.name === target.name) return
-	router.push(target)
+	if (onBlockedEvaluatorTab.value) router.replace(target)
+	else router.push(target)
 })
 
 watch(
@@ -178,19 +229,41 @@ const editProfile = () => {
 }
 
 const isSessionUser = () => {
-	return $user.data?.name === profile.data?.name
-}
-
-const currentUserHasHigherAccess = () => {
-	return $user.data?.is_evaluator || $user.data?.is_moderator
-}
-
-const isEvaluatorOrModerator = () => {
 	return (
-		profile.data?.roles?.includes('Batch Evaluator') ||
-		profile.data?.roles?.includes('Moderator')
+		Boolean(profile.data?.username) &&
+		$user.data?.username === profile.data?.username
 	)
 }
+
+// Another evaluator's slots and schedule are keyed on their email, which only a
+// moderator is sent; the endpoints refuse anyone else anyway.
+const canSeeEvaluatorTabs = () => {
+	if ($user.data?.is_moderator) return true
+	return $user.data?.is_evaluator && isSessionUser()
+}
+
+// Only a Batch Evaluator can be picked as a course or batch evaluator, so only
+// their profile has availability. Moderator alone lets you edit it, not have it.
+const profileCanEvaluate = () => {
+	return Boolean(profile.data?.roles?.includes('Batch Evaluator'))
+}
+
+const showEvaluatorTabs = () => canSeeEvaluatorTabs() && profileCanEvaluate()
+
+const EVALUATOR_TABS = ['ProfileEvaluator', 'ProfileEvaluationSchedule']
+
+// A deep link to /slots or /schedule is sent to About once the profile it names
+// is known and can't show them.
+const onBlockedEvaluatorTab = computed(
+	() =>
+		EVALUATOR_TABS.includes(route.name) &&
+		profile.data?.username === props.username &&
+		!showEvaluatorTabs()
+)
+
+watch(onBlockedEvaluatorTab, (blocked) => {
+	if (blocked) activeTab.value = 'About'
+})
 
 const getTabButtons = () => {
 	let buttons = [
@@ -201,7 +274,7 @@ const getTabButtons = () => {
 		buttons.push({ label: __('Roles'), value: 'Roles' })
 	}
 
-	if (currentUserHasHigherAccess() && isEvaluatorOrModerator()) {
+	if (showEvaluatorTabs()) {
 		buttons.push({ label: __('Slots'), value: 'Slots' })
 		buttons.push({ label: __('Schedule'), value: 'Schedule' })
 	}

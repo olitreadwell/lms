@@ -5,7 +5,7 @@ cd ~ || exit
 echo "Setting Up Bench..."
 
 pip install frappe-bench
-bench -v init frappe-bench --skip-assets --skip-redis-config-generation --python "$(which python)" --frappe-branch "${BASE_BRANCH}"
+bench -v init frappe-bench --skip-assets --skip-redis-config-generation --python "$(which python)" --frappe-branch "${FRAPPE_BRANCH:-${BASE_BRANCH}}"
 cd ./frappe-bench || exit
 
 echo "Get LMS..."
@@ -29,7 +29,7 @@ isodate=$(date -u +"%Y-%m-%d")
 branch_name="pot_${BASE_BRANCH}_${isodate}"
 git checkout -b "${branch_name}"
 
-echo "Commiting changes..."
+echo "Committing changes..."
 git add lms/locale/main.pot
 git commit -m "chore: update POT file"
 

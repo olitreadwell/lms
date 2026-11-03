@@ -5,15 +5,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, reactive } from 'vue'
 
-const { call, routerPush, pageMeta, collectOutputs, runner, documentCache } =
-	vi.hoisted(() => ({
-		documentCache: new Map<string, { reload: () => void }>(),
-		runner: { url: '' },
-		call: vi.fn(),
-		routerPush: vi.fn(),
-		pageMeta: vi.fn(),
-		collectOutputs: vi.fn(async () => ({ outputs: ['5'], elapsed: [0.1] })),
-	}))
+const {
+	call,
+	routerPush,
+	pageMeta,
+	collectOutputs,
+	runner,
+	documentCache,
+	saved,
+	toast,
+	markLessonProgress,
+} = vi.hoisted(() => ({
+	markLessonProgress: vi.fn(),
+	documentCache: new Map<string, { reload: () => void }>(),
+	// The rows the server's own run stored, which reload() hands back.
+	saved: {
+		rows: [] as Record<string, unknown>[],
+		doc: {} as Record<string, unknown>,
+	},
+	toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+	runner: { url: '' },
+	call: vi.fn(),
+	routerPush: vi.fn(),
+	pageMeta: vi.fn(),
+	collectOutputs: vi.fn(async () => ({ outputs: ['5'], elapsed: [0.1] })),
+}))
 
 vi.mock('frappe-ui', () => ({
 	Badge: defineComponent({
@@ -44,14 +60,15 @@ vi.mock('frappe-ui', () => ({
 				owner: 'learner@example.com',
 				status: 'Passed',
 				code: 'print(1)',
-				test_cases: [],
+				test_cases: saved.rows,
+				...saved.doc,
 			}
 		}
 		documentCache.set(options.name, resource)
 		return resource
 	},
 	Skeleton: defineComponent({ render: () => h('div') }),
-	toast: { error: vi.fn(), success: vi.fn() },
+	toast,
 	usePageMeta: pageMeta,
 }))
 
@@ -63,11 +80,21 @@ vi.mock('@/router', () => ({
 }))
 vi.mock('@/components/ProgrammingExercises/ExerciseWorkspace.vue', () => ({
 	default: defineComponent({
-		emits: ['run'],
-		setup: (_props, { emit, slots, expose }) => {
-			expose({ showTab: () => {} })
+		// Renders a fragment, so the props it does not read have nowhere to go.
+		inheritAttrs: false,
+		props: { submissionStatus: String, results: Array },
+		emits: ['run', 'reset'],
+		setup: (props, { emit, slots }) => {
 			return () => [
 				h('button', { 'data-testid': 'workspace', onClick: () => emit('run') }),
+				props.submissionStatus,
+				h(
+					'span',
+					{ 'data-testid': 'result-statuses' },
+					(props.results as { status: string }[] | undefined)
+						?.map((row) => row.status)
+						.join(',')
+				),
 				slots.editor?.(),
 			]
 		},
@@ -75,9 +102,13 @@ vi.mock('@/components/ProgrammingExercises/ExerciseWorkspace.vue', () => ({
 }))
 vi.mock('@/components/ProgrammingExercises/ExerciseCodeEditor.vue', () => ({
 	default: defineComponent({
-		props: ['modelValue'],
+		props: ['modelValue', 'readonly'],
 		setup: (props) => () =>
-			h('pre', { 'data-testid': 'code' }, props.modelValue),
+			h(
+				'pre',
+				{ 'data-testid': 'code', 'data-readonly': String(!!props.readonly) },
+				props.modelValue
+			),
 	}),
 }))
 vi.mock('@/components/Layouts/pages/PageHeader.vue', () => ({
@@ -102,6 +133,7 @@ vi.mock('@/utils/dialogs', () => ({
 	isDialogOpen: () => false,
 }))
 vi.mock('@/utils/basePath', () => ({ getLmsRoute: (p: string) => `/lms/${p}` }))
+vi.mock('@/utils/markLessonProgress', () => ({ markLessonProgress }))
 vi.mock(
 	'@/pages/ProgrammingExercises/exerciseRunFlow',
 	async (importOriginal) => ({
@@ -159,6 +191,10 @@ const runCode = async (wrapper: VueWrapper) => {
 
 beforeEach(() => {
 	documentCache.clear()
+	saved.rows = []
+	saved.doc = {}
+	toast.success.mockClear()
+	toast.warning.mockClear()
 	call.mockReset()
 	call.mockImplementation((method: string) => {
 		if (method === 'lms.lms.api.get_programming_exercise')
@@ -169,6 +205,7 @@ beforeEach(() => {
 		return Promise.resolve()
 	})
 	routerPush.mockReset()
+	markLessonProgress.mockReset()
 	pageMeta.mockReset()
 	collectOutputs.mockClear()
 	localStorage.clear()
@@ -202,6 +239,95 @@ describe('the programming exercise mounted inline in a lesson', () => {
 	// Guards unsaved blocks sharing frappe-ui's cached 'new' resource, so a run
 	// in one showed in the others. Broke with this branch's inline exercise.
 	// Added on feat/assessment-visual-redesign when a lesson could hold several.
+	// Guards the screen showing the browser's run while the saved verdict is the
+	// server's own run of the code. Came with the server running a save itself.
+	// Added on fix-1 so the two can never disagree on screen.
+	it("replaces this run's results with the saved ones and says so when they differ", async () => {
+		saved.rows = [
+			{
+				idx: 1,
+				input: '2 3',
+				output: '7',
+				expected_output: '5',
+				status: 'Failed',
+			},
+		]
+		const wrapper = await mountEmbedded()
+
+		await runCode(wrapper)
+
+		expect(wrapper.get('[data-testid="result-statuses"]').text()).toBe('Failed')
+		expect(toast.warning).toHaveBeenCalled()
+		expect(toast.success).not.toHaveBeenCalled()
+	})
+
+	it('confirms the save when the saved results match this run', async () => {
+		saved.rows = [
+			{
+				idx: 1,
+				input: '2 3',
+				output: '5',
+				expected_output: '5',
+				status: 'Passed',
+			},
+		]
+		const wrapper = await mountEmbedded()
+
+		await runCode(wrapper)
+
+		expect(wrapper.get('[data-testid="result-statuses"]').text()).toBe('Passed')
+		expect(toast.success).toHaveBeenCalled()
+	})
+
+	// Guards edited boilerplate being added back on reload, running it twice: a
+	// second `const fs` breaks JavaScript. Added on fix-1 with full_code.
+	it('loads code stored whole as it is, without adding the boilerplate', async () => {
+		saved.doc = { code: 'import sys\nprint(sys.stdin.read())', full_code: 1 }
+
+		const wrapper = await mountEmbedded(undefined, true, 'SUB-9')
+
+		expect(wrapper.get('[data-testid="code"]').text()).toBe(
+			'import sys\nprint(sys.stdin.read())'
+		)
+	})
+
+	it('adds the boilerplate back to code stored without it', async () => {
+		saved.doc = { code: 'print(inputs[0])', full_code: 0 }
+
+		const wrapper = await mountEmbedded(undefined, true, 'SUB-9')
+
+		const editor = wrapper.get('[data-testid="code"]').text()
+		expect(editor.startsWith('with open("stdin"')).toBe(true)
+		expect(editor.endsWith('print(inputs[0])')).toBe(true)
+	})
+
+	// Guards edits typed while the server grades being wiped when the save lands.
+	// Added on fix-1, when saving started to take seconds.
+	it('locks the editor until the save finishes', async () => {
+		let finishSave: (name: string) => void = () => {}
+		call.mockImplementation((method: string) => {
+			if (method === 'lms.lms.api.get_programming_exercise')
+				return Promise.resolve(exercise)
+			if (method === CREATE)
+				return new Promise((resolve) => (finishSave = resolve))
+			if (method === 'lms.lms.api.evaluate_programming_exercise')
+				return Promise.resolve(scoredRun)
+			return Promise.resolve()
+		})
+		const wrapper = await mountEmbedded()
+
+		await runCode(wrapper)
+		expect(
+			wrapper.get('[data-testid="code"]').attributes('data-readonly')
+		).toBe('true')
+
+		finishSave('SUB-1')
+		await flushPromises()
+		expect(
+			wrapper.get('[data-testid="code"]').attributes('data-readonly')
+		).toBe('false')
+	})
+
 	it("keeps one block's submission out of another unsubmitted block", async () => {
 		const first = await mountEmbedded()
 		const second = await mountEmbedded()
@@ -238,6 +364,46 @@ describe('the programming exercise mounted inline in a lesson', () => {
 		await flushPromises()
 
 		expect(wrapper.get('[data-testid="code"]').text()).toBe('print(1)')
+	})
+
+	it('marks the lesson once the saved submission passes', async () => {
+		const wrapper = await mountEmbedded()
+
+		await runCode(wrapper)
+
+		expect(markLessonProgress).toHaveBeenCalledTimes(1)
+	})
+
+	// Regression on this branch only, no upstream PR: the server applies the rule now.
+	// Added on fix/course-progress-enforcement (no PR yet).
+	it('marks the lesson when the saved submission fails too', async () => {
+		saved.doc = { status: 'Failed' }
+		const wrapper = await mountEmbedded()
+
+		await runCode(wrapper)
+
+		expect(markLessonProgress).toHaveBeenCalledTimes(1)
+	})
+
+	it('marks no lesson once the learner has moved to another one', async () => {
+		const wrapper = await mountEmbedded()
+		call.mockImplementation((method: string) => {
+			if (method !== CREATE) return Promise.resolve(scoredRun)
+			window.history.pushState({}, '', '/lms/courses/c/learn/1-2')
+			return Promise.resolve('SUB-1')
+		})
+
+		await runCode(wrapper)
+
+		expect(markLessonProgress).not.toHaveBeenCalled()
+	})
+
+	it('marks no lesson from the standalone page', async () => {
+		const wrapper = await mountEmbedded(undefined, false)
+
+		await runCode(wrapper)
+
+		expect(markLessonProgress).not.toHaveBeenCalled()
 	})
 
 	it('never moves the lesson to another route', async () => {

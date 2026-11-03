@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "serve": "vite preview",
-    "build": "vite build --base=/assets/lms/frontend/ && yarn copy-html-entry",
+    "build": "vite build --base=/assets/lms/frontend/ && yarn copy-html-entry && yarn build:signup-select",
+    "build:signup-select": "vite build --config vite.signup-select.config.js",
     "copy-html-entry": "cp ../lms/public/frontend/index.html ../lms/www/_lms.html",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -26,10 +27,11 @@
     "@editorjs/simple-image": "1.6.0",
     "@editorjs/table": "2.4.2",
     "@framework/ui": "link:../../frappe/ui",
+    "@frappe/cloud-sdk": "0.6.0",
     "@headlessui/vue": "1.7.23",
     "@vueuse/core": "^14.1.0",
     "dayjs": "1.11.10",
-    "dompurify": "3.2.6",
+    "dompurify": "3.4.16",
     "echarts": "^6.1.0",
     "editorjs-drag-drop": "1.1.16",
     "face-api.js": "^0.22.2",
@@ -49,16 +51,16 @@
   },
   "devDependencies": {
     "@codemirror/language": "^6.0.0",
-    "@vitejs/plugin-vue": "5.0.3",
+    "@vitejs/plugin-vue": "6.0.10",
     "@vue/test-utils": "^2.4.10",
     "autoprefixer": "10.4.2",
     "jsdom": "^29.1.1",
     "postcss": "8.4.5",
     "tailwindcss": "^3.4.15",
     "unplugin-auto-import": "^20.3.0",
-    "vite": "5.0.11",
-    "vite-plugin-pwa": "^1.2.0",
-    "vite-plugin-static-copy": "^1.0.6",
+    "vite": "8.3.4",
+    "vite-plugin-pwa": "^1.3.0",
+    "vite-plugin-static-copy": "^4.1.1",
     "vitest": "^4.1.7"
   }
 }

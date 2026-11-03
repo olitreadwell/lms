@@ -112,6 +112,7 @@
 								/>
 								<Link
 									doctype="Currency"
+									query="lms.lms.api.search_currencies"
 									v-model="batchDetail.doc.currency"
 									:filters="{ enabled: 1 }"
 									:label="__('Currency')"
@@ -147,13 +148,24 @@
 							v-model="instructors"
 							doctype="User"
 							url="lms.lms.api.search_users_by_role"
-							:searchParams="{ roles: JSON.stringify(['Batch Evaluator']) }"
+							:searchParams="{
+								roles: JSON.stringify(['Batch Evaluator', 'Course Creator']),
+							}"
 							:label="__('Instructors')"
 							:placeholder="__('Select instructors')"
 							:required="true"
+							:disabled="!batch.data?.can_change_instructors"
 							variant="outline"
 							:onCreate="() => (showMemberModal = true)"
-						/>
+						>
+							<template #summary="{ selected, summary }">
+								{{
+									selected.length
+										? summarisePeople(selected.map((o) => o.label))
+										: summary
+								}}
+							</template>
+						</MultiLink>
 						<Select
 							v-model="batchDetail.doc.medium"
 							:label="__('Medium')"
@@ -195,11 +207,13 @@
 						>
 							<RichTextEditor
 								:id="batchDetailsId"
+								:ariaLabelledby="batchDetailsLabelId"
 								:content="batchDetail.doc.batch_details"
 								@change="(val: string) => updateBatchDetails(val)"
 								:editable="true"
 								:fixedMenu="true"
-								editorClass="prose-sm max-w-none border-b border-x border-outline-gray-2 hover:border-outline-gray-3 hover:shadow-sm focus-within:border-outline-gray-4 focus-within:shadow-sm rounded-b-5 py-1 px-2 min-h-[7rem] max-h-[16rem] overflow-y-scroll transition-colors"
+								minHeight="7rem"
+								maxHeight="16rem"
 							/>
 						</div>
 					</div>
@@ -276,7 +290,10 @@
 					<BatchCourses :batch="batch" />
 				</div>
 				<div class="p-4">
-					<Assessments :batch="batch.data?.name" />
+					<Assessments
+						:batch="batch.data?.name"
+						:can-manage="Boolean(batch.data?.can_manage)"
+					/>
 				</div>
 			</div>
 		</div>
@@ -328,6 +345,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Uploader from '@/components/Controls/Uploader.vue'
 import VideoPreviewField from '@/components/Controls/VideoPreviewField.vue'
 import MultiLink from '@/components/Controls/MultiLink.vue'
+import { summarisePeople } from '@/utils/peopleSummary'
 import Link from '@/components/Controls/Link.vue'
 import Select from '@/components/Controls/Select.vue'
 import BatchCourses from '@/pages/Batches/components/BatchCourses.vue'

@@ -1,9 +1,11 @@
 <template>
+	<NotFound v-if="(batch.fetched || batch.error) && !batch.data?.name" />
 	<TabbedDetailPage
+		v-else
 		ref="page"
 		:tabs="tabs"
 		:breadcrumbs="breadcrumbs"
-		:published="Boolean(batch.data?.published)"
+		:published="isAdmin && Boolean(batch.data?.published)"
 		:loading="!batch.data"
 		:doc="batch"
 		doc-prop="batch"
@@ -25,7 +27,7 @@
 			/>
 			<Button
 				v-if="tab?.key === 'settings' && isAdmin && !isMobile"
-				:variant="batch.data?.published ? 'subtle' : 'solid'"
+				variant="subtle"
 				:theme="batch.data?.published ? 'red' : 'gray'"
 				@click="togglePublishBatch"
 			>
@@ -39,7 +41,7 @@
 			/>
 			<template v-if="tab?.key === 'announcements' && isAdmin && !readOnlyMode">
 				<Tooltip
-					v-if="!batch.data?.students?.length"
+					v-if="!batch.data?.student_count"
 					:text="__('Add students to the batch to make an announcement')"
 				>
 					<HeaderButton
@@ -55,17 +57,22 @@
 					@click="openAnnouncementModal"
 				/>
 			</template>
-			<ShortcutTooltip
-				v-if="tab?.key === 'settings' && isAdmin"
-				:label="__('Save')"
-				combo="Mod+S"
-			>
-				<HeaderButton
-					:label="__('Save')"
-					variant="solid"
-					@click="instance?.submitBatch()"
-				/>
-			</ShortcutTooltip>
+			<template v-if="tab?.key === 'settings' && isAdmin">
+				<Tooltip
+					v-if="!instance?.isDirty"
+					:text="__('No changes to save')"
+					:hoverDelay="100"
+				>
+					<HeaderButton :label="__('Save')" variant="solid" disabled />
+				</Tooltip>
+				<ShortcutTooltip v-else :label="__('Save')" combo="Mod+S">
+					<HeaderButton
+						:label="__('Save')"
+						variant="solid"
+						@click="instance?.submitBatch()"
+					/>
+				</ShortcutTooltip>
+			</template>
 		</template>
 
 		<template #solo>
@@ -114,6 +121,7 @@ import HeaderButton from '@/components/HeaderButton.vue'
 import ShortcutTooltip from '@/components/ShortcutTooltip.vue'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
 import TabbedDetailPage from '@/components/Layouts/pages/TabbedDetailPage.vue'
+import NotFound from '@/pages/NotFound.vue'
 import { openBatchForm } from '@/composables/useBatchForms'
 
 const router = useRouter()
@@ -140,11 +148,6 @@ const batch = createResource({
 		batch: props.batchName,
 	}),
 	auto: true,
-	onSuccess: (data) => {
-		if (!data) {
-			router.push({ name: 'Batches' })
-		}
-	},
 })
 
 // The router reuses this component when you go straight from one batch to
@@ -164,11 +167,15 @@ watch(
 provide('reloadBatchDetails', () => batch.reload())
 
 const isAdmin = computed(() => {
-	return Boolean(user.data?.is_moderator || user.data?.is_evaluator)
+	// is_moderator/is_evaluator are session-wide roles; can_manage is this
+	// batch's own tag, since a Course Creator only manages batches they author.
+	return Boolean(
+		user.data?.is_moderator || user.data?.is_evaluator || batch.data?.can_manage
+	)
 })
 
 const isStudent = computed(() => {
-	return Boolean(batch.data?.students?.includes(user.data?.name))
+	return Boolean(batch.data?.is_student)
 })
 
 const tabs = computed(() => {
@@ -181,6 +188,7 @@ const tabs = computed(() => {
 			icon: 'lucide-list',
 			when: enrolled,
 			flow: true,
+			rendersHeading: true,
 		},
 		{
 			key: 'dashboard',

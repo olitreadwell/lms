@@ -57,7 +57,15 @@ class TestLessonLockingIntegration(BaseTestUtils):
 		cls.author = cls._create_user(
 			"locking-author@example.com", "Lock", "Author", ["Course Creator", "Moderator"]
 		)
+		# Non-Moderator, so tests that must not pass on the Moderator bypass have an
+		# actor that reaches a course only by authoring it.
+		cls.non_moderator_author = cls._create_user(
+			"locking-non-moderator-author@example.com", "Lock", "NonModeratorAuthor", ["Course Creator"]
+		)
 		cls.course = cls._create_course(title="Locking Course", instructor=cls.author.email)
+		course_doc = frappe.get_doc("LMS Course", cls.course.name)
+		course_doc.append("instructors", {"instructor": cls.non_moderator_author.email})
+		course_doc.save()
 		cls.chapter = cls._create_chapter("Locking Chapter", cls.course.name)
 		cls._create_chapter_reference(cls.course.name, cls.chapter.name, idx=1)
 
@@ -109,7 +117,13 @@ class TestLessonLockingIntegration(BaseTestUtils):
 		chapter = self._create_chapter(title, self.course.name)
 		self._create_chapter_reference(self.course.name, chapter.name, idx=2)
 		frappe.db.set_value(
-			"Course Chapter", chapter.name, {"is_scorm_package": 1, "launch_file": "index.html"}
+			"Course Chapter",
+			chapter.name,
+			{
+				"is_scorm_package": 1,
+				"launch_file": "index.html",
+				"scorm_package_path": f"/scorm/{self.course.name}/{chapter.name}",
+			},
 		)
 		lesson = self._create_lesson("SCORM Lesson", chapter.name, self.course.name)
 		self._create_lesson_reference(chapter.name, lesson.name)
@@ -117,6 +131,12 @@ class TestLessonLockingIntegration(BaseTestUtils):
 		return chapter, lesson
 
 	def _create_lesson_quiz(self, lesson_name, title="Locking Lesson Quiz"):
+		"""A quiz carrying only the legacy course/lesson stamp and no placement row.
+
+		This is the shape a lesson deleted before the placement table left behind, and
+		the stamp grants the course's authors and nobody else. Use _place_lesson_quiz
+		for a quiz a lesson save would place.
+		"""
 		user = frappe.session.user
 		frappe.set_user("Administrator")
 		quiz = frappe.get_doc(
@@ -129,6 +149,17 @@ class TestLessonLockingIntegration(BaseTestUtils):
 			}
 		).insert(ignore_permissions=True)
 		frappe.set_user(user)
+		return quiz
+
+	def _place_lesson_quiz(self, lesson_name, title="Locking Lesson Quiz"):
+		"""A quiz embedded in the lesson the way a content save embeds one.
+
+		Course Lesson.quiz_id is a student-visible placement both readings of the quiz
+		rule honour, and it needs no editorjs blob, so the lock — which is what these
+		tests are about — is the only thing left deciding the answer.
+		"""
+		quiz = self._create_lesson_quiz(lesson_name, title=title)
+		frappe.db.set_value("Course Lesson", lesson_name, "quiz_id", quiz.name)
 		return quiz
 
 	def test_flag_off_locks_nothing(self):
@@ -343,10 +374,10 @@ class TestLessonLockingIntegration(BaseTestUtils):
 
 		from lms.page_renderers import SCORMRenderer
 
-		renderer = SCORMRenderer(path=f"scorm/{self.course.name}/{chapter.title}/index.html")
+		renderer = SCORMRenderer(path=f"scorm/{self.course.name}/{chapter.name}/index.html")
 
 		with self.assertRaises(frappe.PermissionError):
-			renderer._check_permission()
+			renderer._check_permission(self.course.name, chapter.name)
 
 	def test_scorm_renderer_serves_bytes_once_the_chapter_is_unlocked(self):
 		self._enable()
@@ -356,9 +387,9 @@ class TestLessonLockingIntegration(BaseTestUtils):
 
 		from lms.page_renderers import SCORMRenderer
 
-		renderer = SCORMRenderer(path=f"scorm/{self.course.name}/{chapter.title}/index.html")
+		renderer = SCORMRenderer(path=f"scorm/{self.course.name}/{chapter.name}/index.html")
 
-		self.assertIsNone(renderer._check_permission())
+		self.assertIsNone(renderer._check_permission(self.course.name, chapter.name))
 
 	def test_outline_withholds_the_package_of_a_locked_scorm_chapter(self):
 		"""The chapter row still carries launch_file in the database — _add_scorm_chapter
@@ -396,17 +427,17 @@ class TestLessonLockingIntegration(BaseTestUtils):
 		from lms.lms.permissions import can_access_quiz
 
 		with self.subTest(case="locked_lesson_quiz_is_not_readable"):
-			quiz = self._create_lesson_quiz(self.lessons[2].name)
+			quiz = self._place_lesson_quiz(self.lessons[2].name)
 			self.assertFalse(can_access_quiz(quiz.name))
 
 		with self.subTest(case="current_lessons_quiz_stays_readable"):
-			quiz = self._create_lesson_quiz(self.lessons[0].name, title="Locking Lesson Quiz Open")
+			quiz = self._place_lesson_quiz(self.lessons[0].name, title="Locking Lesson Quiz Open")
 			self.assertTrue(can_access_quiz(quiz.name))
 
 	def test_a_quiz_orphaned_from_its_lesson_is_refused_under_the_gate(self):
-		# Deleting a lesson clears LMS Quiz.lesson but leaves LMS Quiz.course, so the
-		# placement has no lesson to check and `None not in locked` holds for every
-		# course -- handing any enrolled member a locked lesson's questions.
+		# An orphan is a quiz in no lesson of the course: deleting a lesson clears
+		# LMS Quiz.lesson, leaves LMS Quiz.course, and the stamp left behind grants the
+		# course's authors and nobody else, so the member is refused before any lock.
 		self._enable()
 		quiz = self._create_lesson_quiz(self.lessons[2].name)
 		frappe.db.set_value("LMS Quiz", quiz.name, "lesson", None)
@@ -415,18 +446,39 @@ class TestLessonLockingIntegration(BaseTestUtils):
 
 		self.assertFalse(can_access_quiz(quiz.name))
 
-	def test_a_quiz_orphaned_from_its_lesson_stays_readable_without_the_gate(self):
-		# The refusal above is the gate talking, not a blanket rule: an ungated course
-		# still hands its enrolled members a quiz whose lesson link was cleared.
+	def test_a_quiz_orphaned_from_its_lesson_is_refused_without_the_gate_too(self):
+		# The measured residual of reading the legacy stamp as author-only: an ungated
+		# course used to hand its enrolled members a quiz whose lesson link was
+		# cleared, and now it does not.
 		quiz = self._create_lesson_quiz(self.lessons[2].name)
 		frappe.db.set_value("LMS Quiz", quiz.name, "lesson", None)
 
 		from lms.lms.permissions import can_access_quiz
 
-		self.assertTrue(can_access_quiz(quiz.name))
+		self.assertEqual(get_locked_lessons(self.course.name), set())
+		self.assertFalse(can_access_quiz(quiz.name))
 
-	def test_an_orphaned_quiz_reopens_once_the_course_is_finished(self):
-		# Gate on, nothing left locked: there is no lesson the quiz could be gated by.
+	def test_the_course_author_keeps_the_orphaned_quiz(self):
+		# The other half of the residual, so the refusal above is read as a narrowing
+		# and not as the quiz becoming unreachable: the stamp still names the course,
+		# and whoever may author that course still reaches it. A non-Moderator actor,
+		# so the assertion can only pass via the stamp and not the Moderator bypass.
+		from lms.lms.permissions import can_access_quiz
+		from lms.lms.utils import has_moderator_role
+
+		self.assertFalse(
+			has_moderator_role(self.non_moderator_author.email),
+			"a moderator would pass on the bypass and prove nothing",
+		)
+
+		quiz = self._create_lesson_quiz(self.lessons[2].name)
+		frappe.db.set_value("LMS Quiz", quiz.name, "lesson", None)
+
+		self.assertTrue(can_access_quiz(quiz.name, user=self.non_moderator_author.email))
+
+	def test_an_orphaned_quiz_stays_refused_once_the_course_is_finished(self):
+		# Completing the course cannot bring it back: the refusal is the stamp's
+		# author-only reading, not the lock, so there is nothing for progress to open.
 		self._enable()
 		quiz = self._create_lesson_quiz(self.lessons[2].name)
 		frappe.db.set_value("LMS Quiz", quiz.name, "lesson", None)
@@ -436,14 +488,14 @@ class TestLessonLockingIntegration(BaseTestUtils):
 		from lms.lms.permissions import can_access_quiz
 
 		self.assertEqual(get_locked_lessons(self.course.name), set())
-		self.assertTrue(can_access_quiz(quiz.name))
+		self.assertFalse(can_access_quiz(quiz.name))
 
 	def test_two_placements_in_one_course_compute_the_lock_state_once(self):
 		# A quiz reachable from more than one lesson of the same course walked the whole
 		# lock chain per placement: get_membership plus the ordered rows and the progress
 		# read, repeated for a set that cannot differ between them.
 		self._enable()
-		quiz = self._create_lesson_quiz(self.lessons[2].name)
+		quiz = self._place_lesson_quiz(self.lessons[2].name)
 		frappe.db.set_value("Course Lesson", self.lessons[1].name, "quiz_id", quiz.name)
 
 		from lms.lms import permissions
@@ -454,16 +506,30 @@ class TestLessonLockingIntegration(BaseTestUtils):
 
 		self.assertEqual(lock_state.call_count, 1)
 
-	def test_outline_does_not_publish_the_quiz_of_a_locked_lesson(self):
+	def test_outline_carries_no_lesson_content_for_anyone(self):
+		# The outline is readable before the lesson is, by guests included, so it must
+		# not carry what the lesson page gates: the video, the quiz and the question.
 		self._enable()
 		quiz = self._create_lesson_quiz(self.lessons[2].name)
-		frappe.db.set_value("Course Lesson", self.lessons[2].name, "quiz_id", quiz.name)
+		frappe.db.set_value(
+			"Course Lesson",
+			self.lessons[2].name,
+			{"quiz_id": quiz.name, "youtube": "https://youtu.be/gated000000", "question": "Gated?"},
+		)
 
 		from lms.lms.utils import get_course_outline
 
-		outline = get_course_outline(self.course.name, progress=True)
-		lessons = [lesson for chapter in outline for lesson in chapter.lessons]
-		self.assertIsNone(lessons[2].quiz_id)
+		for user, progress in ((self.student.name, True), ("Guest", False)):
+			frappe.set_user(user)
+			try:
+				outline = get_course_outline(self.course.name, progress=progress)
+			finally:
+				frappe.set_user("Administrator")
+			lessons = [lesson for chapter in outline for lesson in chapter.lessons]
+			self.assertEqual(len(lessons), 3, f"{user} did not receive the outline")
+			for lesson in lessons:
+				for field in ("youtube", "quiz_id", "question"):
+					self.assertNotIn(field, lesson, f"{user} received {field} for {lesson.name}")
 
 	def test_progress_is_published_to_the_completing_member_alone(self):
 		# The outline reload for a quiz or assignment completion rides on this event,

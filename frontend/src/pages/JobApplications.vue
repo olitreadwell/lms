@@ -77,11 +77,6 @@
 				:placeholder="__('Enter email subject')"
 				required
 			/>
-			<FormControl
-				v-model="emailForm.replyTo"
-				:label="__('Reply To')"
-				:placeholder="__('Enter reply to email')"
-			/>
 			<div>
 				<InputLabel
 					:id="messageLabelId"
@@ -94,7 +89,7 @@
 					@change="(val) => (emailForm.message = val)"
 					:editable="true"
 					:fixedMenu="true"
-					editorClass="prose-sm max-w-none border-b border-x border-outline-elevation-2 bg-surface-gray-2 rounded-b-5 py-1 px-2 min-h-[7rem]"
+					minHeight="7rem"
 				/>
 			</div>
 		</div>
@@ -130,7 +125,6 @@ const pageLength = ref(24)
 const emailForm = reactive({
 	subject: '',
 	message: '',
-	replyTo: '',
 })
 
 const props = defineProps({
@@ -142,7 +136,7 @@ const props = defineProps({
 
 const applications = createListResource({
 	doctype: 'LMS Job Application',
-	fields: ['name', 'user', 'creation', 'resume', 'job_title'],
+	fields: ['name', 'creation', 'resume', 'job_title'],
 	filters: {
 		job: props.job,
 	},
@@ -158,7 +152,7 @@ watch(pageLength, (value) => {
 const users = createResource({
 	url: 'lms.lms.api.get_application_users',
 	makeParams: () => ({
-		user_names: (applications.data || []).map((a) => a.user),
+		applications: (applications.data || []).map((a) => a.name),
 	}),
 })
 
@@ -200,18 +194,14 @@ watch(search, () => {
 	totalApplications.reload()
 })
 
+// The applicant's address is looked up on the server; this page never holds it.
 const emailResource = createResource({
-	url: 'frappe.core.doctype.communication.email.make',
-	makeParams(values) {
+	url: 'lms.lms.api.send_job_application_email',
+	makeParams() {
 		return {
-			recipients: selectedApplicant.value.email,
-			cc: emailForm.replyTo,
+			application: selectedApplicant.value.name,
 			subject: emailForm.subject,
-			content: emailForm.message,
-			doctype: 'LMS Job Application',
-			name: selectedApplicant.value.name,
-			send_email: 1,
-			now: true,
+			message: emailForm.message,
 		}
 	},
 })
@@ -219,7 +209,6 @@ const emailResource = createResource({
 const openEmailModal = (applicant) => {
 	selectedApplicant.value = applicant
 	emailForm.subject = `Job Application for ${applications.data?.[0]?.job_title} - ${applicant.full_name}`
-	emailForm.replyTo = ''
 	emailForm.message = ''
 	showEmailModal.value = true
 }
@@ -287,14 +276,8 @@ const applicationColumns = computed(() => {
 		{
 			label: __('Full Name'),
 			key: 'full_name',
-			width: 3,
+			width: 6,
 			icon: 'lucide-user',
-		},
-		{
-			label: __('Email'),
-			key: 'email',
-			width: 3,
-			icon: 'lucide-at-sign',
 		},
 		{
 			label: __('Applied On'),
@@ -314,14 +297,15 @@ const applicationColumns = computed(() => {
 
 const applicantRows = computed(() => {
 	if (!applications.data) return []
-	const userMap = Object.fromEntries((users.data || []).map((u) => [u.name, u]))
+	const userMap = Object.fromEntries(
+		(users.data || []).map((u) => [u.application, u])
+	)
 	return applications.data.map((application) => {
-		const user = userMap[application.user] || {}
+		const user = userMap[application.name] || {}
 		return {
 			...application,
 			user_image: user.user_image,
 			full_name: user.full_name,
-			email: user.email,
 			applied_on: dayjs(application.creation).format('DD MMM YYYY'),
 		}
 	})

@@ -84,6 +84,13 @@ describe('FormShell', () => {
 		expect(wrapper.emitted('close')).toHaveLength(1)
 	})
 
+	it('emits close when the desktop Dialog is dismissed', async () => {
+		const wrapper = mountShell(1024)
+		wrapper.findComponent(Dialog).vm.$emit('update:open', false)
+		await nextTick()
+		expect(wrapper.emitted('close')).toHaveLength(1)
+	})
+
 	it('covers the parent list as a fixed full-screen surface on mobile', () => {
 		const wrapper = mountShell(390)
 		const page = wrapper.find('[data-testid="form-shell-page"]')
@@ -411,6 +418,19 @@ describe('FormShell', () => {
 		wrapper.unmount()
 		expect(document.activeElement).toBe(outside)
 		document.body.removeChild(outside)
+	})
+
+	it('focuses an [autofocus] field instead of the page on mobile', () => {
+		const wrapper = mountShell(390, {
+			default: '<input class="other" /><input class="title" autofocus />',
+		})
+		expect(document.activeElement).toBe(wrapper.find('input.title').element)
+	})
+
+	it('keeps the page focused when [autofocus] marks an unfocusable node', () => {
+		const wrapper = mountShell(390, { default: '<div autofocus>x</div>' })
+		const page = wrapper.find('[data-testid="form-shell-page"]')
+		expect(document.activeElement).toBe(page.element)
 	})
 
 	// The trigger that opened the form usually survives, because forms are child

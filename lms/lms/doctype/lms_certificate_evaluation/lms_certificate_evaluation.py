@@ -52,12 +52,49 @@ def has_permission(doc, ptype="read", user=None):
 		# same question save_evaluation_details asks: who is assigned to this
 		# course/batch? Members never create their own evaluation -- they book an
 		# LMS Certificate Request that an evaluator or Moderator converts.
-		return doc.evaluator == user and get_evaluator(doc.course, doc.batch_name) == user
+		return is_assigned_evaluator(doc, user)
 
 	if ptype in ("write", "delete"):
-		return doc.evaluator == user
+		# The write check sees the caller's in-memory values, so ask the create
+		# question of both those and the stored row: either alone lets an evaluator
+		# move an evaluation onto, or off, a course they do not evaluate.
+		stored = frappe.db.get_value(
+			"LMS Certificate Evaluation",
+			doc.name,
+			["evaluator", "member", "course", "batch_name"],
+			as_dict=True,
+		)
+		if not stored or not is_assigned_evaluator(stored, user):
+			return False
+		return ptype == "delete" or is_assigned_evaluator(doc, user)
 
 	return False
+
+
+def is_assigned_evaluator(evaluation, user):
+	return evaluation.evaluator == user and can_evaluate(
+		user, evaluation.member, evaluation.course, evaluation.batch_name
+	)
+
+
+def can_evaluate(user: str, member: str, course: str, batch_name: str | None = None) -> bool:
+	"""The course/batch's evaluator, or the evaluator on the member's live certificate request."""
+	if get_evaluator(course, batch_name) == user:
+		return True
+	if not (member and course):
+		return False
+	return bool(
+		frappe.db.exists(
+			"LMS Certificate Request",
+			{
+				"member": member,
+				"course": course,
+				"batch_name": batch_name or ("is", "not set"),
+				"evaluator": user,
+				"status": ("!=", "Cancelled"),
+			},
+		)
+	)
 
 
 def get_permission_query_conditions(user=None):
@@ -87,12 +124,28 @@ def create_lms_certificate(source_name: str, target_doc: dict = None):
 	if not isinstance(source_name, str):
 		frappe.throw(_("Evaluation must be a string."))
 
-	evaluator = frappe.db.get_value("LMS Certificate Evaluation", source_name, "evaluator")
-	if not is_evaluation_admin() and evaluator != frappe.session.user:
+	evaluation = (
+		frappe.db.get_value(
+			"LMS Certificate Evaluation", source_name, ["evaluator", "course", "batch_name"], as_dict=True
+		)
+		or frappe._dict()
+	)
+	if not is_evaluation_admin() and evaluation.evaluator != frappe.session.user:
 		frappe.throw(
 			_("You are not the assigned evaluator for this evaluation."),
 			frappe.PermissionError,
 		)
+
+	# get_mapped_doc checks create before it maps, so seed the scope that check reads.
+	# A Document, not a dict: version-16's get_mapped_doc takes only a str or a Document.
+	target_doc = frappe.get_doc(
+		target_doc
+		or {
+			"doctype": "LMS Certificate",
+			"course": evaluation.course,
+			"batch_name": evaluation.batch_name,
+		}
+	)
 
 	doc = get_mapped_doc(
 		"LMS Certificate Evaluation",
@@ -101,3 +154,8 @@ def create_lms_certificate(source_name: str, target_doc: dict = None):
 		target_doc,
 	)
 	return doc
+
+
+def on_doctype_update():
+	# Backs the locking (member, course, batch_name) read in api.save_*_details.
+	frappe.db.add_index("LMS Certificate Evaluation", ["member", "course", "batch_name"])

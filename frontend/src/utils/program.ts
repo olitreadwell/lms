@@ -1,5 +1,6 @@
 import { createApp, h, markRaw } from 'vue'
 import type { App } from 'vue'
+import type { BlockAPI } from '@editorjs/editorjs'
 import { registerDirectives } from '@/directives'
 import { Code } from 'lucide-vue-next'
 import translationPlugin from '@/translation'
@@ -18,21 +19,25 @@ export class Program {
 	app: App | null = null
 	destroyed = false
 	studentView: boolean
+	block?: BlockAPI
 
 	constructor({
 		data,
 		api,
 		readOnly,
 		config,
+		block,
 	}: {
 		data: any
 		api: any
 		readOnly: boolean
 		config?: { studentView?: boolean }
+		block?: BlockAPI
 	}) {
 		this.data = data
 		this.api = api
 		this.readOnly = readOnly
+		this.block = block
 		// The block is its own Vue app, outside the lesson's provide/inject, so
 		// Student View reaches it through the tool config.
 		this.studentView = Boolean(config?.studentView)
@@ -75,22 +80,29 @@ export class Program {
 		const app = createApp(ProgrammingExerciseModal, {
 			onSave: (exercise: string) => {
 				this.data.exercise = exercise
+				this.app?.unmount()
 				this.renderExercise(exercise)
+				this.block?.dispatchChange()
 			},
 		})
 		registerDirectives(app)
 		app.use(translationPlugin)
 		app.mount(this.wrapper)
+		this.app = app
 	}
 
 	renderExercise(exercise: string) {
 		if (this.readOnly) {
 			const { userResource } = usersStore()
+			if (!userResource.data) {
+				this.mountSubmission(exercise, 'new')
+				return
+			}
 			call<{ name?: string } | null>('frappe.client.get_value', {
 				doctype: 'LMS Programming Exercise Submission',
 				filters: {
 					exercise: exercise,
-					member: userResource.data?.name,
+					member: userResource.data.name,
 				},
 				fieldname: ['name'],
 			})

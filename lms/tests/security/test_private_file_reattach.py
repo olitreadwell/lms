@@ -24,6 +24,11 @@ class TestPrivateFileReattach(BaseTestUtils):
 			f"pfr-s-{self.hash}@example.com", "Sam", "Student", ["LMS Student"]
 		).name
 		self.assignment = self._create_assignment(f"PFR Assignment {self.hash}").name
+		# A learner answers only an assignment a course of theirs places.
+		instructor = self._create_user(f"pfr-i-{self.hash}@example.com", "In", "Str", ["Course Creator"]).name
+		course = self._create_course(title=f"PFR Course {self.hash}", instructor=instructor).name
+		self._place_in_lesson(course, "LMS Assignment", self.assignment)
+		self._create_enrollment(self.student, course)
 
 	def _upload(self, owner, file_name):
 		frappe.set_user(owner)
@@ -136,10 +141,32 @@ class TestPrivateFileReattach(BaseTestUtils):
 
 		self.assertEqual(submission.assignment_attachment, own.file_url)
 
-	def test_evaluator_can_grade_a_submission_with_an_attachment(self):
+	def _evaluator_for_the_assignment(self):
+		"""An evaluator the way production makes one: tagged on a batch that runs it.
+
+		The Batch Evaluator role tags nobody by itself -- a Course Evaluator insert is
+		what grants it -- and assessment_submission_has_permission reads the Batch
+		Course row rather than the role, so a bare role holder reaches no submission.
+		"""
 		evaluator = self._create_user(
 			f"pfr-e-{self.hash}@example.com", "Eva", "Luator", ["Batch Evaluator"]
 		).name
+		course = self._create_course(title=f"PFR Grading Course {self.hash}", instructor="Administrator")
+		self._create_evaluator(evaluator)
+		batch = self._create_batch(
+			course.name,
+			title=f"PFR Grading Batch {self.hash}",
+			instructor="Administrator",
+			evaluator=evaluator,
+		)
+		batch.append("assessment", {"assessment_type": "LMS Assignment", "assessment_name": self.assignment})
+		batch.save()
+		# Batch staff grade only the batch's own students.
+		self._create_batch_enrollment(self.student, batch.name)
+		return evaluator
+
+	def test_evaluator_can_grade_a_submission_with_an_attachment(self):
+		evaluator = self._evaluator_for_the_assignment()
 		own = self._upload(self.student, f"essay-{self.hash}.txt")
 		submission = self._submit(assignment_attachment=own.file_url)
 
@@ -167,8 +194,11 @@ class TestPrivateFileReattach(BaseTestUtils):
 				**values,
 			}
 		)
+		# The "New job alert" email is not under test, and premailer logs CSS
+		# warnings to stderr the first time it renders one.
 		try:
-			return job.insert()
+			with patch("frappe.email.doctype.notification.notification.evaluate_alert"):
+				return job.insert()
 		finally:
 			frappe.set_user("Administrator")
 
@@ -208,14 +238,15 @@ class TestPrivateFileReattach(BaseTestUtils):
 		self.assertFalse(frappe.db.exists("LMS Job Application", {"user": self.student}))
 
 	def test_own_resume_is_emailed_with_its_own_content(self):
-		own = self._upload(self.student, f"resume-{self.hash}.txt")
+		file_name = f"resume-{self.hash}.txt"
+		own = self._upload(self.student, file_name)
 
 		self._apply(own.file_url)
 
 		attachments = self.sendmail.call_args.kwargs["attachments"]
 		self.assertEqual(
 			attachments,
-			[{"fname": own.file_name, "fcontent": frappe.get_doc("File", own.name).get_content()}],
+			[{"fname": own.file_name, "fcontent": f"{self.student} {file_name} {self.hash}".encode()}],
 		)
 
 	def test_company_logo_cannot_publish_another_users_file(self):

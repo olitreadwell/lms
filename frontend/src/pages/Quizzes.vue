@@ -32,7 +32,7 @@
 				<template #prefix>
 					<span class="lucide-plus size-4" />
 				</template>
-				{{ __('Create') }}
+				{{ __('New Quiz') }}
 			</Button>
 		</template>
 
@@ -42,10 +42,10 @@
 				:modelValue="Boolean(value)"
 				:disabled="true"
 			/>
-			<div v-else-if="column.key == 'modified'" class="text-sm text-ink-gray-5">
+			<div v-else-if="column.key == 'modified'" class="text-sm text-ink-gray-6">
 				{{ value }}
 			</div>
-			<div v-else>{{ value }}</div>
+			<div v-else class="truncate">{{ value }}</div>
 		</template>
 
 		<template #selection-actions="{ selections }">

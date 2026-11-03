@@ -33,7 +33,7 @@
 				</template>
 			</Button>
 			<div
-				class="min-w-0 flex-1 text-center text-p-xs font-medium tabular-nums text-ink-gray-5"
+				class="min-w-0 flex-1 text-center text-p-xs font-medium tabular-nums text-ink-gray-6"
 			>
 				{{ lessonIndex }} / {{ lessonTotal }}
 			</div>
@@ -121,18 +121,20 @@
 
 								<div
 									v-if="zenModeEnabled"
+									tabindex="0"
 									class="relative flex items-center gap-x-2 text-sm text-ink-gray-7 group w-fit mt-2"
 								>
 									<span>
 										{{ lesson.data.chapter_title }} -
 										{{ lesson.data.course_title }}
 									</span>
-									<span class="lucide-info size-3" />
+									<span class="lucide-info size-3" aria-hidden="true" />
+									<span class="sr-only">{{ progressLabel }}</span>
 									<div
-										class="hidden group-hover:block [@media(hover:none)]:block [@media(hover:none)]:static [@media(hover:none)]:mt-0 rounded-4 bg-surface-gray-10 px-2 py-1 text-xs text-ink-base shadow-xl absolute start-0 top-full mt-2"
+										class="hidden group-hover:block group-focus-within:block [@media(hover:none)]:block [@media(hover:none)]:static [@media(hover:none)]:mt-0 rounded-4 bg-surface-gray-10 px-2 py-1 text-xs text-ink-base shadow-xl absolute start-0 top-full mt-2"
+										aria-hidden="true"
 									>
-										{{ Math.ceil(lesson.data.membership.progress) }}%
-										{{ __('completed') }}
+										{{ progressLabel }}
 									</div>
 								</div>
 							</div>
@@ -186,7 +188,7 @@
 							>
 								<UserAvatar
 									v-for="instructor in lesson.data.instructors"
-									:key="instructor.name ?? instructor"
+									:key="instructor.username"
 									:user="instructor"
 								/>
 							</span>
@@ -203,7 +205,7 @@
 							"
 							class="bg-surface-gray-2 p-3 rounded-5 mt-6"
 						>
-							<h2 class="text-ink-gray-5 font-medium">
+							<h2 class="text-ink-gray-6 font-medium">
 								{{ __('Instructor Notes') }}
 							</h2>
 							<div
@@ -263,7 +265,7 @@
 						</div>
 					</div>
 					<div
-						v-if="lesson.data && (allowDiscussions || tabs.length > 1)"
+						v-if="lesson.data && tabs.length"
 						class="mt-10 pb-20 pt-5 border-t px-5"
 						ref="discussionsContainer"
 					>
@@ -297,6 +299,7 @@
 					:courseName="courseName"
 					:courseTitle="lesson.data.course_title"
 					:progress="lessonProgress"
+					:withProgress="Boolean(user.data)"
 					:selectedLessonNumber="`${chapterNumber}-${lessonNumber}`"
 					:completedLesson="completedLesson"
 				/>
@@ -328,6 +331,7 @@
 			<StudentLessonSidebar
 				:courseName="courseName"
 				:progress="lessonProgress"
+				:withProgress="Boolean(user.data)"
 				:selectedLessonNumber="`${chapterNumber}-${lessonNumber}`"
 				:completedLesson="completedLesson"
 				:hideHeader="true"
@@ -405,6 +409,16 @@ import { getLmsRoute } from '@/utils/basePath'
 import { provideStudentView } from '@/composables/useStudentView'
 import type { UserResource } from '@/composables/useStudentView'
 import type { Note, Notes as NotesResource } from '@/types'
+import { isInstructorOf } from '@/utils/instructors'
+import { allowSkipUpTo } from '@/utils/videoSkipGuard'
+import {
+	enableBunnyPlayers,
+	isBunnyStreamSource,
+} from '@/utils/bunnyStreamPlayer'
+import {
+	holdLessonCompletion,
+	releaseLessonCompletion,
+} from '@/utils/markLessonProgress'
 
 interface LessonProgressEvent {
 	course: string
@@ -434,7 +448,8 @@ interface PlayerEvent {
 	detail?: { code?: number; message?: string }
 }
 
-// The subset of Plyr (and its YouTube/Vimeo `embed`) this page drives.
+// The subset of Plyr (and its YouTube/Vimeo `embed`) this page drives. The
+// Bunny Stream adapter has the same shape.
 interface LessonPlayer {
 	source: string
 	currentTime: number
@@ -492,8 +507,6 @@ const { isMobile } = useScreenSize()
 const showChapters = ref(false)
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
-const tabs = ref<LessonTab[]>([])
-
 const props = defineProps<{
 	courseName: string
 	chapterNumber: string
@@ -545,6 +558,7 @@ onBeforeUnmount(() => {
 	// one — so a single progress event fires one outline reload per past visit.
 	socket.off('update_lesson_progress', onLessonProgress)
 	if (collapsedByLesson) sidebarStore.isSidebarCollapsed = false
+	releaseLessonCompletion()
 	trackVideoWatchDuration()
 })
 
@@ -657,6 +671,7 @@ const renderEditor = (holder: string, content: string): EditorJS | null => {
 // and the second one fails with TimestampMismatchError on LMS Enrollment.
 let progressSubmitting = false
 const markProgress = () => {
+	releaseLessonCompletion()
 	if (progressSubmitting) return
 	// Only enrolled students record progress; a moderator previewing has no
 	// membership row so save_progress would no-op server-side but still
@@ -765,6 +780,9 @@ const currentIndex = computed(() =>
 	lessonNumbers.value.indexOf(`${props.chapterNumber}-${props.lessonNumber}`)
 )
 const lessonTotal = computed(() => lessonNumbers.value.length)
+const progressLabel = computed(() =>
+	__('{0}% completed').format(Math.ceil(lesson.data?.membership?.progress ?? 0))
+)
 const lessonIndex = computed(() =>
 	currentIndex.value >= 0 ? currentIndex.value + 1 : 0
 )
@@ -872,6 +890,7 @@ const resetLessonState = (
 		lesson: newLessonNumber,
 	})
 	videoFallbackArmed = false
+	releaseLessonCompletion()
 	fallbackGeneration++
 	clearInterval(timerInterval)
 	timer.value = 0
@@ -948,9 +967,16 @@ watch(
 		// runs for every lesson type (including YouTube/Plyr), so admins can
 		// set a short dwell to mark video lessons complete without a full
 		// playthrough.
+		// A quiz or assignment submit would otherwise complete the lesson before
+		// the enforced video is watched; markProgress releases the hold.
 		if (!shouldStartDwellTimer({ hasVideo: hasVideoListener, enforceVideo })) {
 			clearInterval(timerInterval)
+			holdLessonCompletion()
+		} else {
+			releaseLessonCompletion()
 		}
+		// After the hold, so a video resumed at its end can release it.
+		updateVideoWatchDuration()
 		if (
 			shouldAttachVideoFallback({ hasVideo: hasVideoListener, enforceVideo })
 		) {
@@ -974,7 +1000,7 @@ watch(
 const getPlyrSource = async () => {
 	await nextTick()
 	if (plyrSources.value.length == 0) {
-		plyrSources.value = await enablePlyr()
+		plyrSources.value = [...(await enablePlyr()), ...enableBunnyPlayers()]
 		const enforceVideo = Boolean(
 			Number(settingsStore.settings?.data?.enforce_video_completion ?? 0)
 		)
@@ -1004,13 +1030,16 @@ const getPlyrSource = async () => {
 			})
 		}
 	}
-	updateVideoWatchDuration()
 }
 
 const updateVideoWatchDuration = () => {
 	if (lesson.data.videos && lesson.data.videos.length > 0) {
 		lesson.data.videos.forEach((video: WatchedVideo) => {
-			if (video.source.includes('youtube') || video.source.includes('vimeo')) {
+			if (
+				video.source.includes('youtube') ||
+				video.source.includes('vimeo') ||
+				isBunnyStreamSource(video.source)
+			) {
 				updatePlyrVideoTime(video)
 			} else {
 				updateVideoTime(video)
@@ -1051,11 +1080,33 @@ const updatePlyrVideoTime = (video: WatchedVideo): void => {
 
 		plyrSource.on('ready', () => {
 			if (plyrSource.source === video.source) {
+				allowSkipUpTo(plyrSource, video.watch_time)
 				plyrSource.embed.seekTo(video.watch_time, true)
 				plyrSource.play()
 				plyrSource.pause()
+				completePlayerIfWatched(plyrSource, video.watch_time)
 			}
 		})
+	})
+}
+
+// A video watched to the end on an earlier visit has nothing left to end, so
+// resuming there counts as the ended event the enforced-video hold waits for.
+const completeIfWatched = (watchTime: number, duration: number): void => {
+	if (isVideoComplete(watchTime, duration)) markProgress()
+}
+
+// Bunny reports its duration only with timeupdate, so at ready it is still 0.
+const completePlayerIfWatched = (
+	player: LessonPlayer,
+	watchTime: number
+): void => {
+	if (player.duration > 0) return completeIfWatched(watchTime, player.duration)
+	let checked = false
+	player.on('timeupdate', () => {
+		if (checked || !(player.duration > 0)) return
+		checked = true
+		completeIfWatched(watchTime, player.duration)
 	})
 }
 
@@ -1065,11 +1116,14 @@ const updateVideoTime = (video: WatchedVideo): void => {
 		videos.forEach((vid) => {
 			if (vid.src === video.source) {
 				let watch_time = video.watch_time < vid.duration ? video.watch_time : 0
+				allowSkipUpTo(vid, video.watch_time)
 				if (vid.readyState >= 1) {
 					vid.currentTime = watch_time
+					completeIfWatched(video.watch_time, vid.duration)
 				} else {
 					vid.addEventListener('loadedmetadata', () => {
 						vid.currentTime = watch_time
+						completeIfWatched(video.watch_time, vid.duration)
 					})
 				}
 			}
@@ -1086,6 +1140,7 @@ const fallbackToDwellTimer = (reason: string): void => {
 	if (isStudentView.value || !lesson.data?.membership) return
 	if (videoFallbackArmed) return
 	videoFallbackArmed = true
+	releaseLessonCompletion()
 	console.warn('[Lesson] video fallback engaged:', reason)
 	toast.warning(
 		__(
@@ -1160,8 +1215,11 @@ const checkIfDiscussionsAllowed = () => {
 }
 
 const isAdmin = computed(() => {
-	let isInstructor = lesson.data?.instructors?.includes(user.data?.name)
-	return user.data?.is_moderator || isInstructor
+	const isInstructor = isInstructorOf(
+		lesson.data?.instructors,
+		user.data?.username
+	)
+	return Boolean(user.data?.is_moderator) || isInstructor
 })
 
 // Student view is a mode, not a destination: every hop that stays on a lesson
@@ -1174,8 +1232,11 @@ const studentViewQuery = computed(() =>
 // Reads the real user, not the student-view shadow, so the way back to the
 // editor survives ?studentView=1.
 const canEditLesson = computed(() => {
-	const isInstructor = lesson.data?.instructors?.includes(realUser.data?.name)
-	return realUser.data?.is_moderator || isInstructor
+	const isInstructor = isInstructorOf(
+		lesson.data?.instructors,
+		realUser.data?.username
+	)
+	return Boolean(realUser.data?.is_moderator) || isInstructor
 })
 
 const allowInstructorContent = () => {
@@ -1281,27 +1342,28 @@ const updateNotes = () => {
 	notes.reload()
 }
 
-watch(allowDiscussions, () => {
-	if (!isAdmin.value) {
-		if (!tabs.value.find((tab) => tab.value === 'Notes')) {
-			tabs.value.push({
-				label: __('Notes'),
-				value: 'Notes',
-			})
+// Built from the current lesson, not pushed on each change: a page opened
+// straight on a quiz lesson never flips allowDiscussions, so pushed tabs never
+// appeared, and tabs pushed on an earlier lesson stayed after moving on.
+const tabs = computed<LessonTab[]>(() => [
+	// Guests cannot save notes, so they get none.
+	...(user.data && !isAdmin.value
+		? [{ label: __('Notes'), value: 'Notes' }]
+		: []),
+	...(allowDiscussions.value
+		? [{ label: __('Community'), value: 'Community' }]
+		: []),
+])
+
+watch(
+	tabs,
+	(options) => {
+		if (!options.some((tab) => tab.value === currentTab.value)) {
+			currentTab.value = options[0]?.value
 		}
-		currentTab.value = 'Notes'
-	} else {
-		currentTab.value = allowDiscussions.value ? 'Community' : undefined
-	}
-	if (allowDiscussions.value) {
-		if (!tabs.value.find((tab) => tab.value === 'Community')) {
-			tabs.value.push({
-				label: __('Community'),
-				value: 'Community',
-			})
-		}
-	}
-})
+	},
+	{ immediate: true }
+)
 
 const redirectToLogin = () => {
 	window.location.href = `/login?redirect-to=${getLmsRoute(

@@ -1,7 +1,7 @@
 /**
  * The You page, mounted.
  *
- * buildYouRows is tested on its own in youRows.test.ts, so what is left here is
+ * buildYouRows is tested on its own in mobileYouRows.test.ts, so what is left here is
  * everything mounting adds: that a row reporting an action reaches the right
  * handler, that a guest who types the URL gets a prompt rather than a Log out
  * button, and that the page stands up with no bottom bar above it.

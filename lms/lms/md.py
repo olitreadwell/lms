@@ -15,18 +15,44 @@ as argument.
 
 import html as HTML
 import re
-import xml.etree.ElementTree as etree
 
 import frappe
-import markdown
-from bs4 import BeautifulSoup
-from markdown import Extension
-from markdown.inlinepatterns import InlineProcessor
+from frappe.utils import md_to_html
 
 
 def markdown_to_html(text):
-	"""Renders markdown text into html."""
-	return markdown.markdown(text, extensions=["fenced_code", MacroExtension()])
+	"""Renders markdown text into html, with macros rendered in place."""
+	macros = []
+
+	def stash(match):
+		macros.append(match)
+		return _macro_placeholder(len(macros) - 1)
+
+	html = md_to_html(re.sub(MACRO_RE, stash, text or "")) or ""
+
+	# macros inside code are examples, so they stay as literal text
+	def restore_literal(code):
+		code = code.group(0)
+		for index, macro in enumerate(macros):
+			code = code.replace(_macro_placeholder(index), HTML.escape(macro.group(0), quote=False))
+		return code
+
+	html = re.sub(r"<(pre|code)\b.*?</\1>", restore_literal, html, flags=re.DOTALL)
+	for index, macro in enumerate(macros):
+		placeholder = _macro_placeholder(index)
+		if placeholder in html:
+			html = html.replace(placeholder, _render_macro_block(macro.group(1), macro.group(2)))
+	return html
+
+
+def _macro_placeholder(index):
+	# letters and digits only, so markdown passes it through untouched
+	return f"lmsmacroplaceholder{index}x"
+
+
+def _render_macro_block(macro_name, macro_argument):
+	classname = "lesson-video" if macro_name == "YouTubeVideo" else ""
+	return f"<div class='{classname}'>{render_macro(macro_name, macro_argument)}</div>"
 
 
 def find_macros(text):
@@ -92,7 +118,7 @@ class MacroExtension(Extension):
 
 class MacroInlineProcessor(InlineProcessor):
 	"""MacroInlineProcessor is class that is handles the logic
-	of how to render each macro occurence in the markdown text.
+	of how to render each macro occurrence in the markdown text.
 	"""
 
 	def handleMatch(self, m, data):

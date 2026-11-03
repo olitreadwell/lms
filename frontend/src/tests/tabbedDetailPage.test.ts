@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h, markRaw, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
@@ -78,22 +78,26 @@ vi.stubGlobal('__', (text: string) => text)
 const DOC = { title: 'Intro to Frappe' }
 
 function body(testid: string): Component {
-	return defineComponent({
-		props: { course: { type: Object, default: null } },
-		setup(props) {
-			return () =>
-				h('div', { 'data-testid': testid }, String(props.course?.title ?? ''))
-		},
-	})
+	return markRaw(
+		defineComponent({
+			props: { course: { type: Object, default: null } },
+			setup(props) {
+				return () =>
+					h('div', { 'data-testid': testid }, String(props.course?.title ?? ''))
+			},
+		})
+	)
 }
 
-const SettingsBody = defineComponent({
-	props: { course: { type: Object, default: null } },
-	setup(_props, { expose }) {
-		expose({ save: () => 'saved' })
-		return () => h('div', { 'data-testid': 'body-settings' })
-	},
-})
+const SettingsBody = markRaw(
+	defineComponent({
+		props: { course: { type: Object, default: null } },
+		setup(_props, { expose }) {
+			expose({ save: () => 'saved' })
+			return () => h('div', { 'data-testid': 'body-settings' })
+		},
+	})
+)
 
 type Tab = {
 	key: string
@@ -423,5 +427,38 @@ describe('TabbedDetailPage tab strip', () => {
 		const strip = wrapper.find('[role="tablist"]')
 		expect(strip.text()).toContain('Course editor')
 		expect(strip.find('.lucide-list').exists()).toBe(true)
+	})
+})
+
+describe('TabbedDetailPage heading', () => {
+	// Guards: detail pages with no h1, and a second h1 over a body that has its
+	// own. Introduced in #2637; test added with the a11y audit remediation.
+	const breadcrumbs = [{ label: 'Intro to Frappe', route: { name: 'X' } }]
+	const owns = tabs().map((t) => ({
+		...t,
+		rendersHeading: t.key === 'overview',
+	}))
+	const none = { when: false }
+	const hidden = {
+		overview: none,
+		dashboard: none,
+		editor: none,
+		settings: none,
+	}
+
+	it.each([
+		['a plain tab', tabs(), false, ['Intro to Frappe']],
+		['a tab with its own h1', owns, false, []],
+		['the solo view', tabs(hidden), false, []],
+		['a loading doc', tabs(), true, []],
+	])('sr-only h1 over %s', async (_, list, loading, expected) => {
+		const { wrapper } = await mountPage({
+			tabs: list,
+			slots: { solo },
+			props: { breadcrumbs, loading },
+		})
+		expect(wrapper.findAll('h1.sr-only').map((h1) => h1.text())).toEqual(
+			expected
+		)
 	})
 })

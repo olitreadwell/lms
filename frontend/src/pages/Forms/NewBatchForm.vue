@@ -88,13 +88,23 @@
 							v-model="batch.instructors"
 							doctype="User"
 							url="lms.lms.api.search_users_by_role"
-							:searchParams="{ roles: JSON.stringify(['Batch Evaluator']) }"
+							:searchParams="{
+								roles: JSON.stringify(['Batch Evaluator', 'Course Creator']),
+							}"
 							:label="__('Instructors')"
 							:placeholder="__('Select instructors')"
 							:required="true"
 							variant="outline"
 							:onCreate="() => (showMemberModal = true)"
-						/>
+						>
+							<template #summary="{ selected, summary }">
+								{{
+									selected.length
+										? summarisePeople(selected.map((o) => o.label))
+										: summary
+								}}
+							</template>
+						</MultiLink>
 					</div>
 					<div class="space-y-1.5">
 						<InputLabel
@@ -108,11 +118,13 @@
 						>
 							<RichTextEditor
 								:id="batchDetailsId"
+								:ariaLabelledby="batchDetailsLabelId"
 								:content="batch.batch_details"
 								@change="(val: string) => (batch.batch_details = val)"
 								:editable="true"
 								:fixedMenu="true"
-								editorClass="prose-sm max-w-none border-b border-x border-outline-gray-2 hover:border-outline-gray-3 hover:shadow-sm focus-within:border-outline-gray-4 focus-within:shadow-sm rounded-b-5 py-1 px-2 min-h-[10rem] max-h-[14rem] overflow-auto transition-colors"
+								minHeight="10rem"
+								maxHeight="14rem"
 							/>
 						</div>
 					</div>
@@ -123,7 +135,7 @@
 			<div v-if="canCreateBatch" class="flex items-center justify-end">
 				<HeaderButton
 					data-testid="new-batch-save"
-					:label="__('Save')"
+					:label="__('Create')"
 					variant="solid"
 					:loading="batches.insert.loading"
 					@click="saveBatch()"
@@ -147,6 +159,7 @@ import {
 } from 'frappe-ui'
 import type { FrappeResourceError } from 'frappe-ui'
 import { useOnboarding } from '@framework/ui/components/Onboarding/index'
+import { seesOnboarding } from '@/utils/onboarding'
 import { useTelemetry } from '@framework/ui/telemetry/index'
 import { computed, inject, onMounted, onBeforeUnmount, ref } from 'vue'
 import { createLMSCategory, cleanError } from '@/utils'
@@ -156,14 +169,18 @@ import FormShell from '@/components/FormShell.vue'
 import HeaderButton from '@/components/HeaderButton.vue'
 import { useFormRoute } from '@/composables/useFormRoute'
 import MultiLink from '@/components/Controls/MultiLink.vue'
+import { summarisePeople } from '@/utils/peopleSummary'
 import Link from '@/components/Controls/Link.vue'
 import Select from '@/components/Controls/Select.vue'
 import NewMemberModal from '@/components/Modals/NewMemberModal.vue'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import { InputLabel, useInputLabeling } from 'frappe-ui/experimental'
 import { submitResource } from '@/utils/resource'
+import { validateBatch } from '@/utils/batchForm'
+import { filledFields, takeFormSource } from '@/composables/formTracking'
 
 const { capture } = useTelemetry()
+const batchCreated = ref(false)
 const { updateOnboardingStep } = useOnboarding('learning')
 const dateFormat = getDateFormat()
 const user = inject<any>('$user')
@@ -244,6 +261,14 @@ const onInstructorCreated = (user: any) => {
 const saveBatch = () => {
 	if (!canCreateBatch.value) return
 	sanitizeStringFields(batch.value as Record<string, unknown>)
+	const error = validateBatch({
+		doc: batch.value,
+		instructors: batch.value.instructors,
+	})
+	if (error) {
+		toast.error(error)
+		return
+	}
 	submitResource(
 		batches.insert,
 		{
@@ -254,8 +279,8 @@ const saveBatch = () => {
 		},
 		{
 			onSuccess(data: any) {
+				batchCreated.value = true
 				toast.success(__('Batch created successfully'))
-				capture('batch_created')
 				// replace, not push: the form entry is consumed so Back reaches
 				// the list rather than a stale empty form.
 				saveAndReplace({
@@ -263,7 +288,7 @@ const saveBatch = () => {
 					params: { batchName: data.name },
 					hash: '#settings',
 				})
-				if (user.data?.is_system_manager) {
+				if (seesOnboarding(user.data)) {
 					updateOnboardingStep('create_first_batch', true, false, () => {
 						localStorage.setItem('firstBatch', data.name)
 					})
@@ -293,14 +318,19 @@ const keyboardShortcut = (e: KeyboardEvent) => {
 
 onMounted(() => {
 	window.addEventListener('keydown', keyboardShortcut)
-	capture('batch_form_opened')
+	capture('batch_form_opened', { source: takeFormSource() })
 })
 
 onBeforeUnmount(() => {
 	window.removeEventListener('keydown', keyboardShortcut)
-	capture('batch_form_closed', {
-		data: batch.value,
-	})
+	if (!batchCreated.value) {
+		capture('batch_form_closed', {
+			data: batch.value,
+			// Which fields were filled when the form was left, to see where
+			// people stop.
+			filled_fields: filledFields(batch.value),
+		})
+	}
 })
 
 const timezoneResource = createResource({

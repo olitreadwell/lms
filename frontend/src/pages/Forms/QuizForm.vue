@@ -2,10 +2,19 @@
 	<PageHeader :breadcrumbs="breadcrumbs" :loading="quizDetails.loading">
 		<template #actions>
 			<template v-if="!readOnlyMode">
-				<Badge v-if="doc?.name" :theme="hasUnsavedWork ? 'amber' : 'green'">
+				<Badge
+					v-if="doc?.name && !locked"
+					:theme="hasUnsavedWork ? 'amber' : 'green'"
+				>
 					{{ hasUnsavedWork ? __('Not saved') : __('Saved') }}
 				</Badge>
 				<template v-if="doc?.name">
+					<HeaderButton
+						variant="subtle"
+						icon="lucide-link"
+						:label="__('Copy link')"
+						@click="copyQuizLink"
+					/>
 					<HeaderButton
 						variant="subtle"
 						icon="lucide-eye"
@@ -21,6 +30,7 @@
 						@click="goToSubmissions"
 					/>
 					<HeaderButton
+						v-if="!locked"
 						variant="subtle"
 						theme="red"
 						icon="lucide-trash-2"
@@ -31,6 +41,7 @@
 			</template>
 		</template>
 	</PageHeader>
+	<h1 class="sr-only">{{ pageTitle }}</h1>
 	<div
 		v-if="quizDetails.loading && !quizDetails.doc"
 		class="flex items-center justify-center py-20"
@@ -46,8 +57,15 @@
 				<Quiz :quizName="quizDetails.doc.name" preview />
 			</div>
 			<template v-else>
+				<p
+					v-if="notAuthor"
+					data-testid="quiz-read-only-note"
+					class="mb-5 text-base text-ink-gray-6"
+				>
+					{{ __('Only the authors of this quiz can edit it.') }}
+				</p>
 				<div
-					v-if="!readOnlyMode"
+					v-if="!locked"
 					class="mb-5 flex items-center gap-3"
 					data-testid="question-toolbar"
 				>
@@ -144,7 +162,7 @@
 						)
 					"
 				>
-					<Button variant="subtle" @click="addBlankQuestion">
+					<Button v-if="!locked" variant="subtle" @click="addBlankQuestion">
 						<template #prefix><span class="lucide-plus size-4" /></template>
 						{{ __('New question') }}
 					</Button>
@@ -168,7 +186,7 @@
 									:reorderDisabled="reorderDisabled"
 									:usageCount="questionMeta[element.question]?.quizzes || 1"
 									:meta="questionMeta[element.question] || null"
-									:readOnly="readOnlyMode"
+									:readOnly="locked"
 									:allowedUiTypes="allowedUiTypesFor(typeRows, element.name)"
 									@edit="openCard(element)"
 									@done="closeCard(element.name)"
@@ -213,7 +231,12 @@
 				@selection-change="bankSelectionCount = $event"
 				@close="closeBank"
 			/>
-			<div v-else class="space-y-8 p-5">
+			<fieldset
+				v-else
+				:disabled="locked"
+				data-testid="quiz-details-fields"
+				class="m-0 min-w-0 space-y-8 border-0 p-5"
+			>
 				<div class="space-y-5">
 					<h2 class="text-lg font-semibold text-ink-gray-9">
 						{{ __('Details') }}
@@ -356,7 +379,7 @@
 						variant="outline"
 					/>
 				</div>
-			</div>
+			</fieldset>
 		</div>
 	</div>
 </template>
@@ -408,8 +431,9 @@ import { useDebounceFn } from '@vueuse/core'
 
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { sanitizeOnWrite } from '@/utils/sanitizeOnWrite'
-import { useTelemetry } from '@framework/ui/telemetry/index'
+import { getLmsRoute } from '@/utils/basePath'
 import { resourceErrorMessage, submitResource } from '@/utils/resource'
+import { useCanWrite } from '@/composables/useCanWrite'
 
 const { brand } = sessionStore()
 const rightPanel = ref('settings') // 'settings' | 'bank'
@@ -458,7 +482,6 @@ const questionMeta = ref({})
 const user = inject('$user')
 const router = useRouter()
 const readOnlyMode = window.read_only_mode
-const { capture } = useTelemetry()
 const { $dialog } = getCurrentInstance().appContext.config.globalProperties
 
 const deleteQuiz = () => {
@@ -499,6 +522,11 @@ const props = defineProps({
 // A quiz takes its docname from its title, so nothing is written until the author
 // has given it one. Until then the fields edit this object and no doc exists.
 const isNew = computed(() => !props.quizID)
+
+// Placing a quiz in a lesson grants use only, so a non-author opens it read-only.
+const canWrite = useCanWrite('LMS Quiz', () => props.quizID)
+const locked = computed(() => readOnlyMode || canWrite.value !== true)
+const notAuthor = computed(() => !readOnlyMode && canWrite.value === false)
 const newQuiz = reactive({ title: '', passing_percentage: 100 })
 const doc = computed(() => (isNew.value ? newQuiz : quizDetails.value.doc))
 
@@ -518,7 +546,7 @@ const savedQuestions = () =>
 // setValue replaces doc wholesale and unmounts every open editor, so a save waits for them.
 const canSave = computed(
 	() =>
-		!readOnlyMode &&
+		!locked.value &&
 		quizDetails.value.isDirty &&
 		!draft.value &&
 		editingNames.size === 0
@@ -649,6 +677,38 @@ const togglePreview = async () => {
 	if (hasUnsavedWork.value) return
 	// v-if, not v-show: <Quiz> fetches on mount, so a hidden instance would go stale.
 	previewing.value = true
+}
+
+// The learner-facing page, the link an author shares.
+const copyQuizLink = async () => {
+	const link = `${window.location.origin}${getLmsRoute(
+		`quiz/${encodeURIComponent(quizDetails.value.doc.name)}`
+	)}`
+	try {
+		await copyText(link)
+		toast.success(__('Link copied'))
+	} catch {
+		toast.error(__('Could not copy the link: {0}').format(link))
+	}
+}
+
+// navigator.clipboard exists only on HTTPS or localhost, so a site served over
+// plain http (a bench on a LAN hostname) falls back to the older copy command.
+const copyText = async (text) => {
+	if (navigator.clipboard?.writeText) {
+		await navigator.clipboard.writeText(text)
+		return
+	}
+	const field = document.createElement('textarea')
+	field.value = text
+	field.setAttribute('readonly', '')
+	field.style.position = 'fixed'
+	field.style.opacity = '0'
+	document.body.appendChild(field)
+	field.select()
+	const copied = document.execCommand('copy')
+	field.remove()
+	if (!copied) throw new Error('copy failed')
 }
 
 // The cross-quiz list with this quiz's filter applied, not the per-quiz page: the
@@ -852,7 +912,6 @@ const createIfNamed = async () => {
 			url: 'frappe.client.insert',
 			auto: false,
 		}).submit({ doc: { doctype: 'LMS Quiz', ...newQuiz } })
-		capture('quiz_created')
 		// The page is not remounted by this: the quizID watch above picks the quiz up.
 		router.replace({ name: 'QuizForm', params: { quizID: created.name } })
 	} catch (error) {
@@ -950,9 +1009,9 @@ const submitQuiz = ({ notify = true } = {}) => {
 				// The server message is the actionable half, so the warning wraps around it.
 				// It stays up until dismissed, because nobody is watching an autosave fail.
 				toast.error(
-					__(
-						'{0} Your changes are not saved. Do not close this tab until they are.'
-					).format(err.messages?.[0] || err),
+					__('{0} Your changes are not saved.').format(
+						err.messages?.[0] || err
+					),
 					{ id: SAVE_FAILED_TOAST, duration: Infinity }
 				)
 			},
@@ -1016,6 +1075,11 @@ const calculateTotalMarks = () => {
 	const counted = limit ? rows.slice(0, limit) : rows
 	return counted.reduce((total, row) => total + (Number(row.marks) || 0), 0)
 }
+
+// A new quiz's title changes on every keystroke, so its heading stays fixed.
+const pageTitle = computed(() =>
+	isNew.value ? __('New Quiz') : doc.value?.title || __('Quiz')
+)
 
 const breadcrumbs = computed(() => {
 	const crumbs = [

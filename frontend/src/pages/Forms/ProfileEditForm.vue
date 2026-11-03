@@ -55,7 +55,7 @@
 							:fixedMenu="true"
 							@change="(val) => (profile.bio = val)"
 							:content="profile.bio"
-							editorClass="prose-sm py-2 px-2 min-h-[280px] border-outline-gray-2 hover:border-outline-gray-3 rounded-b-5 bg-surface-gray-3"
+							minHeight="280px"
 						/>
 					</div>
 				</div>
@@ -165,7 +165,7 @@ const updateProfile = createResource({
 
 const validateMandatoryFields = () => {
 	const missingFields = []
-	if (!profile.first_name) missingFields.push(__('First Name'))
+	if (!profile.first_name.trim()) missingFields.push(__('First Name'))
 	if (missingFields.length) {
 		toast.error(
 			__('Please fill the mandatory fields: {0}').format(

@@ -30,6 +30,10 @@ MODEL_ANSWER = "<p>THE-MODEL-ANSWER-NO-STUDENT-MAY-READ</p>"
 ABSENT = "<absent>"
 
 
+def drop_nulls(document):
+	return {key: value for key, value in document.items() if value is not None}
+
+
 class TestAssignmentAnswerScope(BaseTestUtils):
 	"""`answer` is the model answer on a row every account on the site can read.
 
@@ -76,6 +80,25 @@ class TestAssignmentAnswerScope(BaseTestUtils):
 			user_type="System User",
 		)
 		self.assignment = self._create_answered_assignment(hash)
+
+		# assessment_has_permission now reaches the row too, not only its `answer`
+		# field: `creator` and `evaluator` need a real relationship to it, and
+		# `student` needs to be enrolled in the course it is placed in.
+		course = self._create_course(title=f"Answer Scope Course {hash}", instructor=self.creator.email)
+		self._place_in_lesson(course.name, "LMS Assignment", self.assignment.name)
+		self._create_enrollment(self.student.name, course.name)
+		self._create_evaluator(self.evaluator.email)
+		batch = self._create_batch(
+			course.name,
+			title=f"Answer Scope Batch {hash}",
+			instructor="Administrator",
+			evaluator=self.evaluator.email,
+		)
+		batch.append(
+			"assessment", {"assessment_type": "LMS Assignment", "assessment_name": self.assignment.name}
+		)
+		batch.save()
+
 		self._assert_actor_roles()
 		self.custom_docperms: list[str] = []
 
@@ -118,10 +141,12 @@ class TestAssignmentAnswerScope(BaseTestUtils):
 
 	def _single_doc_read(self, label):
 		"""The REST single-doc path. `frappe.get_doc` runs no permission check at all,
-		so the read has to go through the endpoint that applies field-level ones."""
+		so the read has to go through the endpoint that applies field-level ones.
+		Nulls are dropped as develop's `client.get` does; version-16 returns a withheld
+		field as None instead."""
 		frappe.set_user(getattr(self, label).name)
 		try:
-			return client_get("LMS Assignment", self.assignment.name)
+			return drop_nulls(client_get("LMS Assignment", self.assignment.name))
 		finally:
 			frappe.set_user("Administrator")
 

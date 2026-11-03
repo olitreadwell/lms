@@ -14,7 +14,12 @@
 		<template #default>
 			<div class="flex flex-col gap-4">
 				<div>
-					<FormControl v-model="topic.title" :label="__('Title')" type="text" />
+					<FormControl
+						v-model="topic.title"
+						:label="__('Title')"
+						type="text"
+						variant="outline"
+					/>
 				</div>
 				<div>
 					<InputLabel
@@ -28,7 +33,7 @@
 						@change="(val) => (topic.reply = val)"
 						:editable="true"
 						:fixedMenu="true"
-						editorClass="prose-sm max-w-none border-b border-x border-outline-elevation-2 bg-surface-gray-2 rounded-b-5 py-1 px-2 min-h-[7rem]"
+						minHeight="7rem"
 					/>
 				</div>
 			</div>

@@ -1,22 +1,24 @@
 <template>
-	<SidebarHeader
-		:title="appName"
-		:subtitle="
-			userResource.data ? convertToTitleCase(userResource.data.full_name) : ''
-		"
-		:menuItems="userDropdownOptions"
-	>
-		<template #prefix>
-			<img
-				v-if="branding.data?.banner_image"
-				:src="safeUrl(branding.data?.banner_image.file_url)"
-				alt=""
-				class="size-full object-cover"
-			/>
-			<LMSLogo v-else class="size-full" />
-		</template>
-	</SidebarHeader>
-	<SettingsModal v-if="userResource.data?.is_moderator" />
+	<div class="py-2">
+		<SidebarHeader
+			:title="appName"
+			:subtitle="
+				userResource.data ? convertToTitleCase(userResource.data.full_name) : ''
+			"
+			:menuItems="userDropdownOptions"
+		>
+			<template #prefix>
+				<img
+					v-if="branding.data?.banner_image"
+					:src="safeUrl(branding.data?.banner_image.file_url)"
+					alt=""
+					class="size-full object-cover"
+				/>
+				<LMSLogo v-else class="size-full" />
+			</template>
+		</SidebarHeader>
+	</div>
+	<SettingsModal v-if="canOpenSettings()" />
 </template>
 
 <script setup>
@@ -32,9 +34,11 @@ import { createDialog } from '@/utils/dialogs'
 import FrappeCloudIcon from '@/components/Icons/FrappeCloudIcon.vue'
 import LMSLogo from '@/components/Icons/LMSLogo.vue'
 import SettingsModal from '@/components/Settings/Settings.vue'
+import { canOpenSettings } from '@/components/Settings/settings'
 import { safeUrl } from '@/utils/safeUrl'
 import { openExternal } from '@/utils/openExternal'
 import { pushSettingsHash } from '@/composables/useSettingsHash'
+import { isV1CloudAdmin } from '@/composables/cloudSettings'
 
 const router = useRouter()
 const { logout, branding } = sessionStore()
@@ -62,10 +66,17 @@ const themeCheck = {
 			: null,
 }
 
+function isSystemUser() {
+	const cookies = new URLSearchParams(document.cookie.split('; ').join('&'))
+	return cookies.get('system_user') === 'yes'
+}
+
+// Only system users see the Apps menu, and with `block_endpoints` on a website
+// user gets a 403 from this endpoint, so don't fetch it for them at all.
 const apps = createResource({
 	url: 'frappe.apps.get_apps',
 	cache: 'apps',
-	auto: true,
+	auto: isSystemUser(),
 	transform: (data) => [deskApp(), ...siblingApps(data)],
 })
 
@@ -155,14 +166,7 @@ const userDropdownOptions = computed(() => {
 					icon: 'lucide-layout-grid',
 					label: __('Apps'),
 					submenu: appMenuItems.value,
-					condition: () => {
-						let cookies = new URLSearchParams(
-							document.cookie.split('; ').join('&')
-						)
-						let system_user = cookies.get('system_user')
-						if (system_user === 'yes') return true
-						else return false
-					},
+					condition: isSystemUser,
 				},
 				{
 					icon: 'lucide-settings',
@@ -170,9 +174,7 @@ const userDropdownOptions = computed(() => {
 					onClick: () => {
 						pushSettingsHash(router)
 					},
-					condition: () => {
-						return userResource.data?.is_moderator
-					},
+					condition: canOpenSettings,
 				},
 				{
 					icon: 'lucide-wrench',
@@ -182,10 +184,7 @@ const userDropdownOptions = computed(() => {
 							icon: 'lucide-arrow-down-to-line',
 							label: __('Import'),
 							onClick: () => {
-								router.push({
-									name: 'DataImportList',
-									query: { step: 'list' },
-								})
+								router.push({ name: 'DataImportList' })
 							},
 						},
 					],
@@ -227,12 +226,7 @@ const userDropdownOptions = computed(() => {
 							],
 						})
 					},
-					condition: () => {
-						return (
-							userResource.data?.is_system_manager &&
-							userResource.data?.is_fc_site
-						)
-					},
+					condition: isV1CloudAdmin,
 				},
 				{
 					icon: 'lucide-log-out',

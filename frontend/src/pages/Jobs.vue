@@ -9,7 +9,10 @@
 		v-model:page-length="pageLength"
 		empty-name="Job Openings"
 		empty-icon="lucide-briefcase"
+		:search-query="searchQuery"
+		:filtered="Boolean(country || jobType?.trim() || workMode?.trim())"
 		@load-more="jobs.next()"
+		@clear-filters="clearFilters"
 	>
 		<template #actions>
 			<Button
@@ -27,7 +30,7 @@
 				<template #prefix>
 					<span class="lucide-plus size-4" />
 				</template>
-				{{ __('Create') }}
+				{{ __('New Job') }}
 			</Button>
 		</template>
 
@@ -53,17 +56,20 @@
 				doctype="Country"
 				v-model="country"
 				:placeholder="__('Country')"
+				:aria-label="__('Country')"
 			/>
 			<Select
 				v-model="jobType"
 				:options="jobTypes"
 				:placeholder="__('Type')"
+				:aria-label="__('Type')"
 				@update:modelValue="updateJobs"
 			/>
 			<Select
 				v-model="workMode"
 				:options="workModes"
 				:placeholder="__('Work Mode')"
+				:aria-label="__('Work Mode')"
 				@update:modelValue="updateJobs"
 			/>
 		</template>
@@ -179,6 +185,16 @@ const pageLength = computed({
 	},
 })
 
+const clearFilters = () => {
+	// Country and search are watched and reload on their own.
+	const watchedChange = Boolean(country.value || searchQuery.value)
+	jobType.value = null
+	workMode.value = null
+	country.value = null
+	searchQuery.value = ''
+	if (!watchedChange) updateJobs()
+}
+
 const updateJobs = () => {
 	updateFilters()
 	jobs.update({
@@ -237,12 +253,9 @@ watch(activeTab, () => {
 	updateJobs()
 })
 
-watch(country, () => {
-	updateJobs()
-})
-
-// Watch, not a listener. TextInput emits on both input and change.
-watch(searchQuery, () => {
+// Watch, not a listener. TextInput emits on both input and change. One
+// watcher, so clearing both in the same tick reloads once.
+watch([country, searchQuery], () => {
 	updateJobs()
 })
 

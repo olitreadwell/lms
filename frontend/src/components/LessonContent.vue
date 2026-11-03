@@ -2,7 +2,7 @@
 	<div
 		v-if="youtubeEmbedId(youtube)"
 		:key="youtubeEmbedId(youtube)"
-		class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
+		class="not-prose my-5 overflow-hidden rounded-7"
 	>
 		<div
 			class="video-player"
@@ -22,7 +22,7 @@
 			<div
 				v-if="youtubeEmbedId(getId(block))"
 				:key="youtubeEmbedId(getId(block))"
-				class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
+				class="not-prose my-5 overflow-hidden rounded-7"
 			>
 				<div
 					class="video-player"
@@ -36,9 +36,10 @@
 		</div>
 		<div
 			v-else-if="block.includes('{{ Video')"
-			class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
+			class="not-prose my-5 overflow-hidden rounded-7"
 		>
 			<video
+				:ref="guardMacroVideo"
 				controls
 				width="100%"
 				class="block w-full"
@@ -50,10 +51,7 @@
 		</div>
 		<div v-else-if="block.includes('{{ PDF')">
 			<PdfBlock v-if="inlinePdf" :file="getId(block)" />
-			<div
-				v-else
-				class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
-			>
+			<div v-else class="not-prose my-5 overflow-hidden rounded-7">
 				<iframe
 					:src="safeUrl(getId(block))"
 					:title="__('PDF document')"
@@ -66,7 +64,7 @@
 		</div>
 		<div
 			v-else-if="block.includes('{{ Audio')"
-			class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
+			class="not-prose my-5 overflow-hidden rounded-7"
 		>
 			<audio
 				width="100%"
@@ -79,7 +77,7 @@
 		</div>
 		<div
 			v-else-if="block.includes('{{ Embed')"
-			class="not-prose my-5 overflow-hidden rounded-7 border border-outline-gray-2"
+			class="not-prose my-5 overflow-hidden rounded-7"
 		>
 			<iframe
 				width="100%"
@@ -99,6 +97,7 @@
 	</div>
 </template>
 <script setup lang="ts">
+import type { ComponentPublicInstance } from 'vue'
 import Quiz from '@/components/QuizBlock.vue'
 import PdfBlock from '@/components/PdfBlock.vue'
 // @ts-expect-error markdown-it ships no type declarations
@@ -106,6 +105,7 @@ import MarkdownIt from 'markdown-it'
 import { extractYoutubeID, getMacroArg } from '@/utils/lessonMacros'
 import { usesWebkitPdfViewer } from '@/utils/pdfViewer'
 import { safeUrl } from '@/utils/safeUrl'
+import { guardVideoElementSkips } from '@/utils/videoSkipGuard'
 
 const inlinePdf = usesWebkitPdfViewer()
 
@@ -128,6 +128,12 @@ const getId = (block: string): string => {
 	// Guard the match: a malformed `{{ PDF() }}` / unbalanced-quote macro yields
 	// null, and the old unguarded [1] threw and killed the whole lesson render.
 	return getMacroArg(block) ?? ''
+}
+
+const guardMacroVideo = (
+	el: Element | ComponentPublicInstance | null
+): void => {
+	if (el instanceof HTMLVideoElement) guardVideoElementSkips(el)
 }
 
 // Both authoring paths (the `youtube` field and the `{{ YouTubeVideo }}` macro)

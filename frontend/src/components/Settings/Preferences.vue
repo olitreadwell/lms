@@ -11,7 +11,7 @@
 						<div class="text-p-base-medium text-ink-gray-7">
 							{{ __('System Language') }}
 						</div>
-						<div class="text-p-sm text-ink-gray-5">
+						<div class="text-p-sm text-ink-gray-6">
 							{{ __('The language this site falls back to.') }}
 						</div>
 					</div>
@@ -34,7 +34,7 @@
 						<div class="text-p-base-medium text-ink-gray-7">
 							{{ __('System Timezone') }}
 						</div>
-						<div class="text-p-sm text-ink-gray-5">
+						<div class="text-p-sm text-ink-gray-6">
 							{{ __('The timezone new batches and courses start from.') }}
 						</div>
 					</div>
@@ -64,7 +64,7 @@
 						<div class="text-p-base-medium text-ink-gray-7">
 							{{ __('Text Direction') }}
 						</div>
-						<div class="text-p-sm text-ink-gray-5">
+						<div class="text-p-sm text-ink-gray-6">
 							{{ __('Auto follows the language of the site.') }}
 						</div>
 					</div>
@@ -85,6 +85,7 @@
 				<SettingsFields
 					:sections="accessSections"
 					:data="settings.doc"
+					:focus="focusField"
 					@commit="docSave.commit"
 				/>
 			</div>
@@ -135,6 +136,10 @@ const props = defineProps<{
 }>()
 
 const settingsStore = useSettings()
+// Taken once: openSettings names the field this visit is for, and a later
+// visit to the tab should not flash it again.
+const focusField = settingsStore.focusField
+settingsStore.focusField = null
 const user = inject<User>('$user')
 
 // Settings.vue hands the LMS Settings resource down as `data`. Falling
