@@ -104,3 +104,46 @@ def render_macro(macro_name, macro_argument):
 
 
 MACRO_RE = r"{{ *(\w+)\(([^{}]*)\) *}}"
+
+
+class MacroExtension(Extension):
+	"""MacroExtension is a markdown extension to support macro syntax."""
+
+	def extendMarkdown(self, md):
+		self.md = md
+		pattern = MacroInlineProcessor(MACRO_RE)
+		pattern.md = md
+		md.inlinePatterns.register(pattern, "macro", 75)
+
+
+class MacroInlineProcessor(InlineProcessor):
+	"""MacroInlineProcessor is class that is handles the logic
+	of how to render each macro occurrence in the markdown text.
+	"""
+
+	def handleMatch(self, m, data):
+		"""Handles each macro match and return rendered contents
+		for that macro as an etree node.
+		"""
+		macro = m.group(1)
+		arg = m.group(2)
+		html = render_macro(macro, arg)
+		html = sanitize_html(str(html), macro)
+		e = etree.fromstring(html)
+		return e, m.start(0), m.end(0)
+
+
+def sanitize_html(html, macro):
+	"""Sanitize the html using BeautifulSoup.
+
+	The markdown processor request the correct markup and crashes on
+	any broken tags. This makes sures that all those things are fixed
+	before passing to the etree parser.
+	"""
+	soup = BeautifulSoup(html, features="lxml")
+	nodes = soup.body.children
+	classname = ""
+	if macro == "YouTubeVideo":
+		classname = "lesson-video"
+
+	return "<div class='" + classname + "'>" + "\n".join(str(node) for node in nodes) + "</div>"

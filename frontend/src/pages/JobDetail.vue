@@ -35,7 +35,7 @@
 					<HeaderButton
 						v-if="!jobApplication.data?.length"
 						:label="__('Apply')"
-						icon="lucide-send-horizonal"
+						icon="lucide-send-horizontal"
 						variant="solid"
 						@click="openApplicationModal()"
 					/>
