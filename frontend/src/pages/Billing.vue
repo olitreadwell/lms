@@ -84,7 +84,7 @@
 					</div>
 
 					<p
-						class="bg-surface-amber-2 text-ink-amber-4 text-sm leading-5 p-2 rounded-5"
+						class="bg-surface-amber-2 text-ink-amber-5 text-sm leading-5 p-2 rounded-5"
 					>
 						{{
 							__(
@@ -197,6 +197,7 @@
 								"
 								type="checkbox"
 								class="leading-6"
+								:required="true"
 								v-model="billingDetails.member_consent"
 								:error="
 									showConsentWarning

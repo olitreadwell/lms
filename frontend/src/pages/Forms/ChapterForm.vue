@@ -77,7 +77,7 @@
 			<div v-if="canManageChapters" class="flex items-center justify-end">
 				<HeaderButton
 					data-testid="chapter-save"
-					:label="__('Save')"
+					:label="isEdit ? __('Save') : __('Add')"
 					variant="solid"
 					:loading="chapterResource.loading"
 					:disabled="isEdit && !chapterDetail"
@@ -104,6 +104,8 @@ import { getFileSize } from '@/utils/'
 import { resourceErrorMessage, submitResource } from '@/utils/resource'
 import { useOnboarding } from '@framework/ui/components/Onboarding/index'
 import { useTelemetry } from '@framework/ui/telemetry/index'
+import { takeFormSource } from '@/composables/formTracking'
+import { seesOnboarding } from '@/utils/onboarding'
 import FormShell from '@/components/FormShell.vue'
 import HeaderButton from '@/components/HeaderButton.vue'
 import { useFormRoute } from '@/composables/useFormRoute'
@@ -140,7 +142,6 @@ const props = defineProps<{
 
 const route = useRoute()
 const user = inject<SessionUser>('$user')!
-const { capture } = useTelemetry()
 const { updateOnboardingStep } = useOnboarding('learning')
 
 // House style for a route that serves both create and edit
@@ -210,6 +211,10 @@ const outline = createResource({
 
 // C3 — the old watch had no `immediate`, so a directly-mounted route rendered
 // an empty form. Nothing else fills this key, so edit mode always fetches.
+const { capture } = useTelemetry()
+// Read once, at mount: the opener sets it just before navigating here.
+const formSource = takeFormSource()
+
 onMounted(() => {
 	if (isEdit.value) outline.fetch()
 })
@@ -283,9 +288,12 @@ const saveChapter = () => {
 			validate: validateChapter,
 			onSuccess() {
 				if (!isEdit.value) {
-					if (user.data?.is_system_manager)
+					capture('chapter_created', {
+						course: props.courseName,
+						source: formSource,
+					})
+					if (seesOnboarding(user.data))
 						updateOnboardingStep('create_first_chapter')
-					capture('chapter_created')
 				}
 				// Stands in for the modal's `created`/`updated` emits: a route
 				// component has no parent listening, so refresh the outline the

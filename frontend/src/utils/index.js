@@ -10,6 +10,7 @@ import { usersStore } from '@/stores/user'
 import router from '@/router'
 import { pushSettingsHash } from '@/composables/useSettingsHash'
 import { Heading } from '@/utils/heading'
+import { UnknownBlock } from '@/utils/unknownBlock'
 import Paragraph from '@editorjs/paragraph'
 import { CodeBox } from '@/utils/code'
 import NestedList from '@editorjs/nested-list'
@@ -23,7 +24,7 @@ import {
 	clipboardTuneNames,
 } from '@/utils/blockTunes/clipboardTunes'
 import dayjs from '@/utils/dayjs'
-import Embed from '@editorjs/embed'
+import { SafeEmbed } from '@/utils/safeEmbed'
 import SimpleImage from '@editorjs/simple-image'
 import Table from '@editorjs/table'
 import DOMPurify from 'dompurify'
@@ -190,6 +191,9 @@ export function getEditorTools(
 			inlineToolbar: INLINE_TOOLBAR_ORDER,
 		},
 		image: SimpleImage,
+		stub: {
+			class: UnknownBlock,
+		},
 		paragraph: {
 			class: Paragraph,
 			inlineToolbar: INLINE_TOOLBAR_ORDER,
@@ -221,7 +225,7 @@ export function getEditorTools(
 		cutBlock: clipboardTunes.cutBlock,
 		pasteBlock: clipboardTunes.pasteBlock,
 		embed: {
-			class: Embed,
+			class: SafeEmbed,
 			inlineToolbar: false,
 			config: {
 				services: {
@@ -882,7 +886,7 @@ export const createLMSCategory = (name) => {
 // Takes the tab's slug, not its label, since renaming a label must not break
 // callers. Returns whether Settings actually opened, so a caller that closes
 // itself separately can stay put when it did not.
-export const openSettings = (slug, close = null) => {
+export const openSettings = (slug, close = null, field = null) => {
 	const settingsStore = useSettings()
 	if (!settingsStore.isSettingsMounted) {
 		toast.error(__('Settings is only available on a larger screen.'))
@@ -891,6 +895,7 @@ export const openSettings = (slug, close = null) => {
 	if (close) {
 		close()
 	}
+	settingsStore.focusField = field
 	pushSettingsHash(router, slug)
 	return true
 }

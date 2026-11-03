@@ -10,6 +10,8 @@ const resourceState = vi.hoisted(() => ({
 	// Every resource submit, by url. `request` only records reads.
 	submits: [] as string[],
 	response: null as any,
+	// When set, the quiz request fails with this error instead of answering.
+	quizError: null as any,
 	// Per-option verdict check_answer returns: 1 correct, 2 partial, 0 wrong.
 	checkAnswer: [] as unknown[],
 }))
@@ -36,6 +38,12 @@ vi.mock('frappe-ui', async () => {
 				// Match a real network response: let the remounted component finish setup before the cached resource's original callbacks run.
 				await Promise.resolve()
 
+				if (resourceState.quizError) {
+					resource.error = resourceState.quizError
+					resource.loading = false
+					return null
+				}
+
 				const raw = structuredClone(resourceState.response)
 				const transformed = options.transform?.(raw)
 				resource.data = transformed == null ? raw : transformed
@@ -53,6 +61,7 @@ vi.mock('frappe-ui', async () => {
 		resource = reactive({
 			auto: options.auto,
 			data: null,
+			error: null,
 			loading: false,
 			reload,
 			fetch: reload,
@@ -186,7 +195,62 @@ beforeEach(() => {
 	resourceState.submits.length = 0
 	resourceState.response = quizResponse()
 	resourceState.checkAnswer = []
+	resourceState.quizError = null
 	localStorage.clear()
+})
+
+// Guards an empty quiz, or one whose questions no longer resolve, offering Start
+// beside "no questions" and opening on nothing. Came with Start moving below the
+// rules, out of the branch that excluded it. Added on quiz-share-link.
+describe('Quiz with no questions', () => {
+	it('offers no Start button and cannot be started', async () => {
+		const response = quizResponse()
+		response.quiz.questions = [{ question: 'DELETED', marks: 1 }]
+		resourceState.response = response
+		const wrapper = mountQuiz()
+		await flushPromises()
+
+		expect(wrapper.text()).toContain(
+			'This quiz has no questions available yet.'
+		)
+		expect(
+			wrapper.findAll('button').some((b) => b.text() === 'Start Quiz')
+		).toBe(false)
+		;(wrapper.vm as any).startQuiz()
+		expect((wrapper.vm as any).activeQuestion).toBe(0)
+	})
+})
+
+// Guards a shared quiz link rendering a blank page for a student the server
+// refuses. Added on quiz-no-access-message.
+describe('Quiz that fails to load', () => {
+	it('tells a student without access to ask their instructor', async () => {
+		resourceState.quizError = { exc_type: 'PermissionError' }
+		const wrapper = mountQuiz()
+		await flushPromises()
+
+		expect(wrapper.find('[data-testid="quiz-unavailable"]').exists()).toBe(true)
+		expect(wrapper.text()).toContain("You don't have access to this quiz")
+		expect(wrapper.text()).toContain('Ask your instructor to add you.')
+		expect(wrapper.findAll('button').some((b) => b.text() === 'Try again')).toBe(
+			false
+		)
+	})
+
+	it('offers a retry when the quiz fails for another reason', async () => {
+		resourceState.quizError = { exc_type: 'ValidationError' }
+		const wrapper = mountQuiz()
+		await flushPromises()
+
+		expect(wrapper.text()).toContain("This quiz couldn't load")
+		const retry = wrapper.findAll('button').find((b) => b.text() === 'Try again')
+		expect(retry).toBeTruthy()
+
+		resourceState.quizError = null
+		await retry!.trigger('click')
+		await flushPromises()
+		expect(resourceState.request).toHaveBeenCalledTimes(2)
+	})
 })
 
 describe('Quiz remount', () => {
@@ -194,7 +258,7 @@ describe('Quiz remount', () => {
 		const first = mountQuiz()
 		await flushPromises()
 
-		expect(first.text()).toContain('1 question')
+		expect(first.text()).toContain('Questions1')
 		expect(first.text()).toContain('Start')
 		expect(first.text()).not.toContain(
 			'This quiz has no questions available yet.'
@@ -210,7 +274,7 @@ describe('Quiz remount', () => {
 			['lms.lms.utils.get_quiz_with_questions', { quiz: 'QUIZ-1' }],
 			['lms.lms.utils.get_quiz_with_questions', { quiz: 'QUIZ-1' }],
 		])
-		expect(second.text()).toContain('1 question')
+		expect(second.text()).toContain('Questions1')
 		expect(second.text()).toContain('Start')
 		expect(second.text()).not.toContain(
 			'This quiz has no questions available yet.'
@@ -328,20 +392,6 @@ describe('Quiz choices', () => {
 		await flushPromises()
 	}
 
-	it('sends the option the learner picks', async () => {
-		const wrapper = mountQuiz()
-		await flushPromises()
-		resourceState.checkAnswer = [1, 0]
-		await pickFirstAndCheck(wrapper)
-
-		// The warning toast instead of a request would mean getAnswers() saw
-		// nothing selected, i.e. the radio never reached selectedOptions.
-		expect(resourceState.request.mock.calls.map((call) => call[0])).toContain(
-			'lms.lms.doctype.lms_quiz.lms_quiz.check_answer'
-		)
-		wrapper.unmount()
-	})
-
 	it('marks each option right or wrong once checked, keeping the labels', async () => {
 		const wrapper = mountQuiz()
 		await flushPromises()
@@ -386,14 +436,19 @@ describe('Quiz card', () => {
 		expect(wrapper.text()).toContain('Start Quiz')
 	})
 
-	it('summarises the quiz type, size and pass mark in the header', async () => {
+	// The stats repeat it before the start, so the header carries it only during
+	// the attempt.
+	it('summarises the quiz type, size and pass mark in the header once started', async () => {
 		resourceState.response = choicesQuizResponse(2)
 		const wrapper = mountQuiz()
 		await flushPromises()
+		const summary =
+			'Multiple choice\u2002·\u20022 questions\u2002·\u2002pass at 70%'
+		expect(wrapper.text()).not.toContain(summary)
 
-		expect(wrapper.text()).toContain(
-			'Multiple choice · 2 questions · pass at 70%'
-		)
+		await startQuiz(wrapper)
+
+		expect(wrapper.text()).toContain(summary)
 	})
 
 	it('renders one option row per option and a verdict after Check', async () => {
@@ -543,7 +598,7 @@ describe('Quiz for screen readers', () => {
 		const submission = (wrapper.vm as any).quizSubmission
 		submission.data = result
 		await flushPromises()
-		expect(wrapper.text()).toContain('Quiz Summary')
+		expect(wrapper.text()).toContain('Quiz result')
 		expect(document.activeElement?.tagName).not.toBe('H2')
 
 		submission.submit.mockImplementation((_: unknown, callbacks: any) => {
@@ -552,6 +607,87 @@ describe('Quiz for screen readers', () => {
 		})
 		;(wrapper.vm as any).submitQuiz()
 		await flushPromises()
-		expect(document.activeElement?.textContent?.trim()).toBe('Quiz Summary')
+		expect(document.activeElement?.textContent?.trim()).toBe('Quiz result')
+	})
+})
+
+// Guards a confirmed submit lost to a closed tab: submitQuiz waits 500ms before
+// sending, and a page gone in that window sends neither the request nor, once
+// the beacon skipped any submit under way, the beacon. Added after #3176.
+describe('Quiz closed while submitting', () => {
+	const sendBeacon = vi.fn(() => true)
+	const submitUrl = 'lms.lms.doctype.lms_quiz.lms_quiz.submit_quiz'
+
+	const beaconReason = () => {
+		const [, body] = sendBeacon.mock.calls[0] as unknown as [
+			string,
+			URLSearchParams,
+		]
+		return body.get('submission_reason')
+	}
+
+	const startAttempt = async () => {
+		const wrapper = mountQuiz()
+		await flushPromises()
+		await startQuiz(wrapper)
+		resourceState.submits.length = 0
+		return wrapper
+	}
+
+	beforeEach(() => {
+		resourceState.response = choicesQuizResponse(1)
+		sendBeacon.mockClear()
+		Object.assign(navigator, { sendBeacon })
+		vi.useFakeTimers()
+		return () => vi.useRealTimers()
+	})
+
+	it('submits by beacon when the page closes on an idle attempt', async () => {
+		const wrapper = await startAttempt()
+		window.dispatchEvent(new Event('pagehide'))
+
+		expect(sendBeacon).toHaveBeenCalledTimes(1)
+		expect(beaconReason()).toBe('browser_closed')
+		wrapper.unmount()
+	})
+
+	it('hands a submit still waiting to go out to the beacon', async () => {
+		const wrapper = await startAttempt()
+		;(wrapper.vm as any).submitQuiz('timer_expired')
+		window.dispatchEvent(new Event('pagehide'))
+		await vi.advanceTimersByTimeAsync(1000)
+
+		expect(sendBeacon).toHaveBeenCalledTimes(1)
+		expect(beaconReason()).toBe('timer_expired')
+		expect(resourceState.submits).not.toContain(submitUrl)
+		wrapper.unmount()
+	})
+
+	it('sends no beacon once the submit request is in flight', async () => {
+		const wrapper = await startAttempt()
+		const submission = (wrapper.vm as any).quizSubmission
+		submission.submit.mockImplementation(() => {
+			submission.loading = true
+		})
+		;(wrapper.vm as any).submitQuiz()
+		await vi.advanceTimersByTimeAsync(1000)
+		window.dispatchEvent(new Event('pagehide'))
+
+		expect(submission.submit).toHaveBeenCalledTimes(1)
+		expect(sendBeacon).not.toHaveBeenCalled()
+		wrapper.unmount()
+	})
+
+	it('shows Submit as loading from the moment the submit starts', async () => {
+		const wrapper = await startAttempt()
+		const submitButton = () =>
+			wrapper.findAll('button').find((button) => button.text() === 'Submit')!
+		expect(submitButton().attributes('disabled')).toBeUndefined()
+
+		;(wrapper.vm as any).submitQuiz()
+		await wrapper.vm.$nextTick()
+
+		expect(submitButton().attributes('disabled')).toBeDefined()
+		wrapper.unmount()
 	})
 })

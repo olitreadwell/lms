@@ -7,7 +7,7 @@
 		@update:collapsed="setCollapsed"
 	>
 		<UserDropdown />
-		<div class="min-h-0 flex-1 overflow-y-auto px-2 pt-2">
+		<ScrollArea class="min-h-0 flex-1" viewportClass="px-2 pt-2">
 			<div v-if="sidebarSettings.data" class="flex flex-col gap-0.5">
 				<template v-for="row in sidebarRows" :key="row.key">
 					<div v-if="row.kind === 'gap'" class="h-2.5" aria-hidden="true" />
@@ -27,7 +27,7 @@
 					<SidebarLink v-else :link="row.link" />
 				</template>
 			</div>
-		</div>
+		</ScrollArea>
 		<div class="mt-auto flex flex-col gap-1 px-2 pb-2">
 			<div
 				v-if="readOnlyMode && !sidebarStore.isSidebarCollapsed"
@@ -58,70 +58,40 @@
 				/>
 			</template>
 			<TrialBanner
-				v-if="
-					userResource.data?.is_system_manager && userResource.data?.is_fc_site
-				"
+				v-if="isV1CloudAdmin()"
 				:isSidebarCollapsed="sidebarStore.isSidebarCollapsed"
 			/>
+			<TrialCard v-if="!sidebarStore.isSidebarCollapsed" />
 			<GettingStartedBanner
 				v-if="showOnboarding && !isOnboardingStepsCompleted"
 				:isSidebarCollapsed="sidebarStore.isSidebarCollapsed"
 				appName="learning"
 			/>
 			<div
-				class="mt-4 flex gap-3 ps-2"
-				:class="
-					sidebarStore.isSidebarCollapsed
-						? 'flex-col items-start'
-						: 'flex-row items-center'
-				"
+				v-if="readOnlyMode && sidebarStore.isSidebarCollapsed"
+				class="mt-4 flex ps-2"
 			>
-				<template v-if="readOnlyMode && sidebarStore.isSidebarCollapsed">
-					<Tooltip>
-						<span
-							class="lucide-circle-alert size-4 text-ink-gray-7 cursor-pointer"
-							aria-hidden="true"
-						/>
-						<template #content>
-							<div class="max-w-[30ch] text-center text-p-xs">
-								{{ readOnlyNotice }}
-							</div>
-						</template>
-					</Tooltip>
-					<span class="sr-only">{{ readOnlyNotice }}</span>
-				</template>
-				<Tooltip v-if="showOnboarding" :text="__('Help')">
-					<button
-						type="button"
-						class="flex"
-						:aria-label="__('Help')"
-						@click="
-							() => {
-								showHelpModal = minimize ? true : !showHelpModal
-								minimize = !showHelpModal
-							}
-						"
-					>
-						<span
-							class="lucide-circle-help size-4 text-ink-gray-7 cursor-pointer"
-							aria-hidden="true"
-						/>
-					</button>
+				<Tooltip>
+					<span
+						class="lucide-circle-alert size-4 text-ink-gray-7 cursor-pointer"
+						aria-hidden="true"
+					/>
+					<template #content>
+						<div class="max-w-[30ch] text-center text-p-xs">
+							{{ readOnlyNotice }}
+						</div>
+					</template>
 				</Tooltip>
-				<Tooltip :text="__('Powered by Frappe Learning')">
-					<a
-						href="https://frappe.io/learning"
-						v-external
-						class="flex"
-						:aria-label="__('Powered by Frappe Learning')"
-					>
-						<span
-							class="lucide-zap size-4 text-ink-gray-7 cursor-pointer"
-							aria-hidden="true"
-						/>
-					</a>
-				</Tooltip>
+				<span class="sr-only">{{ readOnlyNotice }}</span>
 			</div>
+			<SidebarItem
+				v-if="showOnboarding"
+				class="mt-2"
+				:label="__('Help')"
+				icon="lucide-circle-help"
+				:active="false"
+				:onClick="toggleHelp"
+			/>
 			<SidebarCollapseToggle
 				class="mt-1"
 				:aria-label="
@@ -130,6 +100,7 @@
 			/>
 		</div>
 		<HelpModal
+			class="getting-started"
 			data-testid="onboarding-help-modal"
 			v-if="showOnboarding && showHelpModal"
 			v-model="showHelpModal"
@@ -154,10 +125,12 @@
 <script setup>
 import { getSidebarLinks } from '@/utils'
 import { usersStore } from '@/stores/user'
+import { seesOnboarding } from '@/utils/onboarding'
 import { useSidebar } from '@/stores/sidebar'
 import { useSettings } from '@/stores/settings'
 import {
 	call,
+	ScrollArea,
 	Sidebar,
 	SidebarCard,
 	SidebarCollapseToggle,
@@ -199,8 +172,11 @@ import {
 	IntermediateStepModal,
 } from '@framework/ui/components/Onboarding/index'
 import { useTelemetry } from '@framework/ui/telemetry/index'
+import { setFormSource } from '@/composables/formTracking'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import UserDropdown from '@/components/Sidebar/UserDropdown.vue'
+import TrialCard from '@/components/Sidebar/TrialCard.vue'
+import { isV1CloudAdmin } from '@/composables/cloudSettings'
 import SidebarLink from '@/components/Sidebar/SidebarLink.vue'
 import CommandPalette from '@/components/CommandPalette/CommandPalette.vue'
 import { pushSettingsHash } from '@/composables/useSettingsHash'
@@ -228,6 +204,23 @@ const readOnlyMode = window.read_only_mode
 const readOnlyNotice = __(
 	'This site is being updated. You will not be able to make any changes. Full access will be restored shortly.'
 )
+const openCourseForm = () => {
+	setFormSource('onboarding')
+	openFormRoute(router, { name: 'NewCourse' })
+}
+
+// Opens the help panel, or brings it back when it was minimized.
+const toggleHelp = () => {
+	showHelpModal.value = minimize.value ? true : !showHelpModal.value
+	minimize.value = !showHelpModal.value
+	if (showHelpModal.value) {
+		capture('onboarding_help_opened', {
+			role: userResource.data?.is_system_manager
+				? 'system_manager'
+				: 'moderator',
+		})
+	}
+}
 const iconProps = {
 	strokeWidth: 1.5,
 	width: 16,
@@ -307,9 +300,9 @@ const steps = reactive([
 		completed: false,
 		onClick: () => {
 			minimize.value = true
-			router.push({
-				name: 'Courses',
-			})
+			// Opens the form itself: sent to the course list instead, nothing
+			// happened when the list was already open.
+			openCourseForm()
 		},
 	},
 	{
@@ -325,10 +318,10 @@ const steps = reactive([
 				router.push({
 					name: 'CourseDetail',
 					params: { courseName: course },
-					hash: '#settings',
+					hash: '#editor',
 				})
 			} else {
-				openFormRoute(router, { name: 'NewCourse' })
+				openCourseForm()
 			}
 		},
 	},
@@ -345,10 +338,10 @@ const steps = reactive([
 				router.push({
 					name: 'CourseDetail',
 					params: { courseName: course },
-					hash: '#settings',
+					hash: '#editor',
 				})
 			} else {
-				openFormRoute(router, { name: 'NewCourse' })
+				openCourseForm()
 			}
 		},
 	},
@@ -380,7 +373,8 @@ const steps = reactive([
 		completed: false,
 		onClick: () => {
 			minimize.value = true
-			router.push({ name: 'Batches' })
+			setFormSource('onboarding')
+			openFormRoute(router, { name: 'NewBatch' })
 		},
 	},
 	{
@@ -496,7 +490,7 @@ const articles = ref([
 ])
 
 const setUpOnboarding = () => {
-	if (userResource.data?.is_system_manager) {
+	if (seesOnboarding(userResource.data)) {
 		onboardingDetails = useOnboarding('learning')
 		onboardingDetails.setUp(steps)
 		isOnboardingStepsCompleted = onboardingDetails.isOnboardingStepsCompleted
@@ -552,3 +546,10 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', onKeyboardShortcut)
 })
 </script>
+
+<style scoped>
+.getting-started :deep(.overflow-y-auto) {
+	scrollbar-width: thin;
+	scrollbar-color: var(--outline-gray-3) transparent;
+}
+</style>
