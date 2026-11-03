@@ -1,187 +1,106 @@
 <template>
-	<div
-		class="flex h-full flex-col justify-between transition-all duration-300 ease-in-out border-e bg-surface-sidebar overflow-x-hidden"
-		:class="sidebarStore.isSidebarCollapsed ? 'w-14' : 'w-56'"
+	<Sidebar
+		:collapsed="sidebarStore.isSidebarCollapsed"
+		width="14rem"
+		:ariaLabel="__('Main')"
+		class="border-e"
+		@update:collapsed="setCollapsed"
 	>
-		<div
-			class="flex flex-col overflow-y-auto flex-1 min-h-0"
-			:class="sidebarStore.isSidebarCollapsed ? 'items-center' : ''"
-		>
-			<UserDropdown :isCollapsed="sidebarStore.isSidebarCollapsed" />
-			<nav v-if="sidebarSettings.data" class="mx-2 my-2.5 space-y-1">
+		<UserDropdown />
+		<ScrollArea class="min-h-0 flex-1" viewportClass="px-2 pt-2">
+			<div v-if="sidebarSettings.data" class="flex flex-col gap-0.5">
 				<template v-for="row in sidebarRows" :key="row.key">
 					<div v-if="row.kind === 'gap'" class="h-2.5" aria-hidden="true" />
-					<div v-else-if="row.kind === 'accordion'" class="pt-2">
-						<button
-							type="button"
-							class="flex w-full items-center pe-2 my-1 text-ink-gray-5"
-							:aria-expanded="sidebarStore.isGroupOpen(row.key)"
-							@click="sidebarStore.toggleGroup(row.key)"
-						>
-							<span class="grid h-5 w-6 flex-shrink-0 place-items-center">
-								<span
-									class="lucide-chevron-right h-4 w-4 text-ink-gray-9 transition-all duration-300 ease-in-out"
-									:class="{
-										'rotate-90': sidebarStore.isGroupOpen(row.key),
-										'rtl:rotate-180': !sidebarStore.isGroupOpen(row.key),
-									}"
-								/>
-							</span>
-							<span v-if="!sidebarStore.isSidebarCollapsed" class="ms-2">
-								{{ __(row.label) }}
-							</span>
-						</button>
-						<div v-show="sidebarStore.isGroupOpen(row.key)" class="space-y-1">
-							<SidebarLink
-								v-for="item in row.items"
-								:key="item.key"
-								:link="item.link"
-								:isCollapsed="sidebarStore.isSidebarCollapsed"
-							/>
-						</div>
-					</div>
-					<SidebarLink
-						v-else
-						:link="row.link"
-						:isCollapsed="sidebarStore.isSidebarCollapsed"
-					/>
+					<SidebarSection
+						v-else-if="row.kind === 'accordion'"
+						:label="__(row.label)"
+						collapsible
+						:collapsed="!sidebarStore.isGroupOpen(row.key)"
+						@update:collapsed="sidebarStore.toggleGroup(row.key)"
+					>
+						<SidebarLink
+							v-for="item in row.items"
+							:key="item.key"
+							:link="item.link"
+						/>
+					</SidebarSection>
+					<SidebarLink v-else :link="row.link" />
 				</template>
-			</nav>
-		</div>
-		<div class="m-2 flex flex-col gap-1">
+			</div>
+		</ScrollArea>
+		<div class="mt-auto flex flex-col gap-1 px-2 pb-2">
 			<div
 				v-if="readOnlyMode && !sidebarStore.isSidebarCollapsed"
 				class="z-10 m-2 bg-surface-elevation-2 py-2.5 px-3 text-p-xs text-ink-gray-7 rounded-5"
 			>
-				{{
-					__(
-						'This site is being updated. You will not be able to make any changes. Full access will be restored shortly.'
-					)
-				}}
+				{{ readOnlyNotice }}
 			</div>
-			<div
-				v-if="
-					isStudent && !profileIsComplete && !sidebarStore.isSidebarCollapsed
-				"
-				class="flex flex-col gap-3 text-ink-gray-9 py-2.5 px-3 bg-surface-base shadow-sm rounded-5"
-			>
-				<div class="flex flex-col text-p-sm gap-1">
-					<div class="inline-flex gap-1">
-						<span class="lucide-user h-4 my-0.5 shrink-0" />
-						<div class="font-medium">
-							{{ __('Complete your profile') }}
-						</div>
-					</div>
-					<div class="text-ink-gray-7">
-						{{ __('Highlight what makes you unique and show your skills.') }}
-					</div>
-				</div>
-				<router-link
-					:to="{
-						name: 'Profile',
-						params: {
-							username: userResource.data?.username,
-						},
+			<template v-if="isStudent && !profileIsComplete">
+				<SidebarItem
+					v-if="sidebarStore.isSidebarCollapsed"
+					:label="__('Complete your profile')"
+					icon="lucide-user"
+					:route="profileRoute"
+					:active="false"
+				/>
+				<SidebarCard
+					v-else
+					:title="__('Complete your profile')"
+					:description="
+						__('Highlight what makes you unique and show your skills.')
+					"
+					icon="lucide-user"
+					:action="{
+						label: __('My Profile'),
+						route: profileRoute,
+						iconLeft: 'lucide-chevrons-right',
 					}"
-				>
-					<Button :label="__('My Profile')" class="w-full">
-						<template #prefix>
-							<span class="lucide-chevrons-right h-4 w-4 text-ink-gray-7" />
-						</template>
-					</Button>
-				</router-link>
-			</div>
-			<Tooltip
-				v-if="
-					isStudent && !profileIsComplete && sidebarStore.isSidebarCollapsed
-				"
-				:text="__('Complete your profile')"
-			>
-				<router-link
-					:to="{
-						name: 'Profile',
-						params: {
-							username: userResource.data?.username,
-						},
-					}"
-					class="flex items-center justify-center"
-				>
-					<span class="lucide-user size-4 text-ink-gray-7 cursor-pointer" />
-				</router-link>
-			</Tooltip>
+				/>
+			</template>
 			<TrialBanner
-				v-if="
-					userResource.data?.is_system_manager && userResource.data?.is_fc_site
-				"
+				v-if="isV1CloudAdmin()"
 				:isSidebarCollapsed="sidebarStore.isSidebarCollapsed"
 			/>
+			<TrialCard v-if="!sidebarStore.isSidebarCollapsed" />
 			<GettingStartedBanner
 				v-if="showOnboarding && !isOnboardingStepsCompleted"
 				:isSidebarCollapsed="sidebarStore.isSidebarCollapsed"
 				appName="learning"
 			/>
-
 			<div
-				class="flex items-center mt-4"
-				:class="
-					sidebarStore.isSidebarCollapsed ? 'flex-col space-y-3' : 'flex-row'
-				"
+				v-if="readOnlyMode && sidebarStore.isSidebarCollapsed"
+				class="mt-4 flex ps-2"
 			>
-				<div
-					class="flex items-center flex-1 gap-3"
-					:class="sidebarStore.isSidebarCollapsed ? 'flex-col' : 'flex-row'"
-				>
-					<Tooltip v-if="readOnlyMode && sidebarStore.isSidebarCollapsed">
-						<span
-							class="lucide-circle-alert size-4 text-ink-gray-7 cursor-pointer"
-						/>
-						<template #content>
-							<div class="max-w-[30ch] text-center text-p-xs">
-								{{
-									__(
-										'This site is being updated. You will not be able to make any changes. Full access will be restored shortly.'
-									)
-								}}
-							</div>
-						</template>
-					</Tooltip>
-					<Tooltip v-if="showOnboarding" :text="__('Help')">
-						<span
-							class="lucide-circle-help size-4 text-ink-gray-7 cursor-pointer"
-							@click="
-								() => {
-									showHelpModal = minimize ? true : !showHelpModal
-									minimize = !showHelpModal
-								}
-							"
-						/>
-					</Tooltip>
-					<Tooltip :text="__('Powered by Frappe Learning')">
-						<span
-							class="lucide-zap size-4 text-ink-gray-7 cursor-pointer"
-							@click="redirectToWebsite()"
-						/>
-					</Tooltip>
-				</div>
-				<Tooltip
-					:text="
-						sidebarStore.isSidebarCollapsed ? __('Expand') : __('Collapse')
-					"
-				>
-					<CollapseSidebar
-						class="size-4 text-ink-gray-7 duration-300 stroke-1.5 ease-in-out cursor-pointer"
-						:style="{
-							transform:
-								isRtl !== sidebarStore.isSidebarCollapsed
-									? 'rotateY(180deg)'
-									: '',
-						}"
-						@click="toggleSidebar()"
+				<Tooltip>
+					<span
+						class="lucide-circle-alert size-4 text-ink-gray-7 cursor-pointer"
+						aria-hidden="true"
 					/>
+					<template #content>
+						<div class="max-w-[30ch] text-center text-p-xs">
+							{{ readOnlyNotice }}
+						</div>
+					</template>
 				</Tooltip>
+				<span class="sr-only">{{ readOnlyNotice }}</span>
 			</div>
+			<SidebarItem
+				v-if="showOnboarding"
+				class="mt-2"
+				:label="__('Help')"
+				icon="lucide-circle-help"
+				:active="false"
+				:onClick="toggleHelp"
+			/>
+			<SidebarCollapseToggle
+				class="mt-1"
+				:aria-label="
+					sidebarStore.isSidebarCollapsed ? __('Expand') : __('Collapse')
+				"
+			/>
 		</div>
 		<HelpModal
+			class="getting-started"
 			data-testid="onboarding-help-modal"
 			v-if="showOnboarding && showHelpModal"
 			v-model="showHelpModal"
@@ -199,16 +118,26 @@
 			v-model="showIntermediateModal"
 			:currentStep="currentStep"
 		/>
-	</div>
+	</Sidebar>
 	<CommandPalette v-model="settingsStore.isCommandPaletteOpen" />
 </template>
 
 <script setup>
 import { getSidebarLinks } from '@/utils'
 import { usersStore } from '@/stores/user'
+import { seesOnboarding } from '@/utils/onboarding'
 import { useSidebar } from '@/stores/sidebar'
 import { useSettings } from '@/stores/settings'
-import { Button, call, Tooltip } from 'frappe-ui'
+import {
+	call,
+	ScrollArea,
+	Sidebar,
+	SidebarCard,
+	SidebarCollapseToggle,
+	SidebarItem,
+	SidebarSection,
+	Tooltip,
+} from 'frappe-ui'
 import { buildSidebarRows } from '@/utils/sidebarRows'
 import LMSLogo from '@/components/Icons/LMSLogo.vue'
 import { useRouter } from 'vue-router'
@@ -243,12 +172,13 @@ import {
 	IntermediateStepModal,
 } from '@framework/ui/components/Onboarding/index'
 import { useTelemetry } from '@framework/ui/telemetry/index'
+import { setFormSource } from '@/composables/formTracking'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import UserDropdown from '@/components/Sidebar/UserDropdown.vue'
-import CollapseSidebar from '@/components/Icons/CollapseSidebar.vue'
+import TrialCard from '@/components/Sidebar/TrialCard.vue'
+import { isV1CloudAdmin } from '@/composables/cloudSettings'
 import SidebarLink from '@/components/Sidebar/SidebarLink.vue'
 import CommandPalette from '@/components/CommandPalette/CommandPalette.vue'
-import { openExternal } from '@/utils/openExternal'
 import { pushSettingsHash } from '@/composables/useSettingsHash'
 import {
 	loadUnreadCount,
@@ -271,7 +201,26 @@ const router = useRouter()
 let onboardingDetails
 let isOnboardingStepsCompleted = false
 const readOnlyMode = window.read_only_mode
-const isRtl = document.documentElement.dir === 'rtl'
+const readOnlyNotice = __(
+	'This site is being updated. You will not be able to make any changes. Full access will be restored shortly.'
+)
+const openCourseForm = () => {
+	setFormSource('onboarding')
+	openFormRoute(router, { name: 'NewCourse' })
+}
+
+// Opens the help panel, or brings it back when it was minimized.
+const toggleHelp = () => {
+	showHelpModal.value = minimize.value ? true : !showHelpModal.value
+	minimize.value = !showHelpModal.value
+	if (showHelpModal.value) {
+		capture('onboarding_help_opened', {
+			role: userResource.data?.is_system_manager
+				? 'system_manager'
+				: 'moderator',
+		})
+	}
+}
 const iconProps = {
 	strokeWidth: 1.5,
 	width: 16,
@@ -326,12 +275,9 @@ const updateUnreadCount = () => {
 	})
 }
 
-const toggleSidebar = () => {
-	sidebarStore.isSidebarCollapsed = !sidebarStore.isSidebarCollapsed
-	localStorage.setItem(
-		'isSidebarCollapsed',
-		JSON.stringify(sidebarStore.isSidebarCollapsed)
-	)
+const setCollapsed = (collapsed) => {
+	sidebarStore.isSidebarCollapsed = collapsed
+	localStorage.setItem('isSidebarCollapsed', JSON.stringify(collapsed))
 }
 
 const getFirstCourse = async () => {
@@ -354,9 +300,9 @@ const steps = reactive([
 		completed: false,
 		onClick: () => {
 			minimize.value = true
-			router.push({
-				name: 'Courses',
-			})
+			// Opens the form itself: sent to the course list instead, nothing
+			// happened when the list was already open.
+			openCourseForm()
 		},
 	},
 	{
@@ -372,10 +318,10 @@ const steps = reactive([
 				router.push({
 					name: 'CourseDetail',
 					params: { courseName: course },
-					hash: '#settings',
+					hash: '#editor',
 				})
 			} else {
-				openFormRoute(router, { name: 'NewCourse' })
+				openCourseForm()
 			}
 		},
 	},
@@ -392,10 +338,10 @@ const steps = reactive([
 				router.push({
 					name: 'CourseDetail',
 					params: { courseName: course },
-					hash: '#settings',
+					hash: '#editor',
 				})
 			} else {
-				openFormRoute(router, { name: 'NewCourse' })
+				openCourseForm()
 			}
 		},
 	},
@@ -427,7 +373,8 @@ const steps = reactive([
 		completed: false,
 		onClick: () => {
 			minimize.value = true
-			router.push({ name: 'Batches' })
+			setFormSource('onboarding')
+			openFormRoute(router, { name: 'NewBatch' })
 		},
 	},
 	{
@@ -543,7 +490,7 @@ const articles = ref([
 ])
 
 const setUpOnboarding = () => {
-	if (userResource.data?.is_system_manager) {
+	if (seesOnboarding(userResource.data)) {
 		onboardingDetails = useOnboarding('learning')
 		onboardingDetails.setUp(steps)
 		isOnboardingStepsCompleted = onboardingDetails.isOnboardingStepsCompleted
@@ -577,13 +524,14 @@ const updateSidebarLinks = () => {
 	updateUnreadCount()
 }
 
-const redirectToWebsite = () => {
-	openExternal('https://frappe.io/learning')
-}
-
 const isStudent = computed(() => {
 	return userResource.data?.is_student
 })
+
+const profileRoute = computed(() => ({
+	name: 'Profile',
+	params: { username: userResource.data?.username },
+}))
 
 const profileIsComplete = computed(() => {
 	return (
@@ -598,3 +546,10 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', onKeyboardShortcut)
 })
 </script>
+
+<style scoped>
+.getting-started :deep(.overflow-y-auto) {
+	scrollbar-width: thin;
+	scrollbar-color: var(--outline-gray-3) transparent;
+}
+</style>

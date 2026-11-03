@@ -22,20 +22,6 @@
 			</Button>
 		</div>
 		<div
-			v-if="allowEdit && outline.data && !outline.data.length"
-			class="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center text-ink-gray-5 h-full"
-		>
-			<span class="lucide-book-open size-8" />
-			<div class="text-sm">{{ __('No chapters yet') }}</div>
-			<Button @click="openChapterForm()">
-				<template #prefix>
-					<span class="lucide-plus size-4" />
-				</template>
-				{{ __('Create chapter') }}
-			</Button>
-		</div>
-		<div
-			v-else
 			:class="{
 				'border-2 rounded-5 py-2 px-2': showOutline && outline.data?.length,
 			}"
@@ -45,19 +31,18 @@
 				:disabled="!allowEdit || chapterRenaming"
 				item-key="name"
 				group="chapters"
+				v-bind="outlineDragOptions"
 				@end="updateChapterOrder"
 			>
-				<template #item="{ element: chapter, index }">
+				<template #item="{ element: chapter }">
 					<div class="chapter-item">
 						<ChapterRow
 							:chapter="chapter"
-							:index="index"
 							:courseName="courseName"
 							:allowEdit="allowEdit"
 							:inlineSelect="inlineSelect"
 							:editorLinks="editorLinks"
 							:selectedLessonNumber="selectedLessonNumber"
-							:creatingLesson="creatingLessonChapter === chapter.name"
 							@select-lesson="(payload) => emit('select-lesson', payload)"
 							@edit-chapter="openChapterForm"
 							@rename-chapter="renameChapter"
@@ -68,7 +53,7 @@
 									trashLesson(lesson, chapterName)
 							"
 							@move-lesson="updateOutline"
-							@create-lesson="createLessonInline"
+							@create-lesson="({ chapter }) => emit('add-lesson', { chapter })"
 						/>
 					</div>
 				</template>
@@ -79,6 +64,8 @@
 
 <script setup lang="ts">
 import { Button, createResource, toast } from 'frappe-ui'
+import type { FrappeResourceError } from 'frappe-ui'
+import { resourceErrorMessage } from '@/utils/resource'
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Draggable from 'vuedraggable'
@@ -86,6 +73,7 @@ import Draggable from 'vuedraggable'
 import ChapterRow from '@/components/ChapterRow.vue'
 import { openFormRoute } from '@/composables/useFormRoute'
 import type { OutlineChapter, OutlineLesson, Resource } from '@/types'
+import { outlineDragOptions } from '@/utils/courseOutline'
 
 interface DraggableEvent {
 	item: { __draggable_context: { element: OutlineChapter | OutlineLesson } }
@@ -123,11 +111,9 @@ const emit = defineEmits<{
 	// the wrong doc and an unrelated reload can't consume the signal.
 	'lesson-deleted': [{ lesson: string }]
 	'chapter-deleted': [{ chapter: string }]
+	// The parent opens a draft lesson; nothing is created until it has a title.
+	'add-lesson': [{ chapter: OutlineChapter }]
 }>()
-
-// The lesson currently being named inline (its docname), and the chapter whose
-// "Add Lesson" button is mid-create (for the button spinner).
-const creatingLessonChapter = ref<string>('')
 
 const props = withDefaults(
 	defineProps<{
@@ -196,10 +182,8 @@ const deleteLesson = createResource({
 		outline.reload()
 		toast.success(__('Lesson deleted successfully'))
 	},
-	onError(err: { messages?: string[] } | string) {
-		toast.error(
-			typeof err === 'string' ? err : err.messages?.[0] ?? __('Error')
-		)
+	onError(err: FrappeResourceError) {
+		toast.error(resourceErrorMessage(err, __('Error')))
 	},
 })
 
@@ -239,10 +223,8 @@ const deleteChapter = createResource({
 		outline.reload()
 		toast.success(__('Chapter deleted successfully'))
 	},
-	onError(err: { messages?: string[] } | string) {
-		toast.error(
-			typeof err === 'string' ? err : err.messages?.[0] ?? __('Error')
-		)
+	onError(err: FrappeResourceError) {
+		toast.error(resourceErrorMessage(err, __('Error')))
 	},
 })
 
@@ -261,70 +243,14 @@ const renameChapterResource = createResource({
 		outline.reload()
 		toast.success(__('Chapter renamed successfully'))
 	},
-	onError(err: { messages?: string[] } | string) {
+	onError(err: FrappeResourceError) {
 		outline.reload()
-		toast.error(typeof err === 'string' ? err : err.messages?.[0] ?? 'Error')
+		toast.error(resourceErrorMessage(err, 'Error'))
 	},
 })
 
 function renameChapter(payload: { chapter: OutlineChapter; title: string }) {
 	renameChapterResource.submit(payload)
-}
-
-const errorMessage = (err: { messages?: string[] } | string): string =>
-	typeof err === 'string' ? err : err.messages?.[0] ?? 'Error'
-
-// Inserts the Course Lesson and its chapter reference in one request, so a
-// failure on either rolls back atomically: no orphaned lesson. Returns the
-// new lesson's docname.
-const addLesson = createResource({
-	url: 'lms.lms.api.create_lesson',
-	makeParams(values: { chapter: string }) {
-		return { chapter: values.chapter }
-	},
-})
-
-// Create the lesson immediately as "Untitled lesson", then open it in the
-// editor so the title is edited inline on the lesson itself.
-function createLessonInline(payload: {
-	chapter: OutlineChapter
-	lessonIdx: number
-}) {
-	creatingLessonChapter.value = payload.chapter.name
-	addLesson.submit(
-		{ chapter: payload.chapter.name },
-		{
-			onSuccess(lessonName: string) {
-				creatingLessonChapter.value = ''
-				outline.reload().then(() => {
-					const created = (outline.data ?? [])
-						.flatMap((c) => c.lessons ?? [])
-						.find((l) => l.name === lessonName)
-					if (created) navigateToLesson(created)
-				})
-			},
-			onError(err: { messages?: string[] } | string) {
-				creatingLessonChapter.value = ''
-				toast.error(errorMessage(err))
-			},
-		}
-	)
-}
-
-function navigateToLesson(lesson: OutlineLesson) {
-	const [chapterNumber, lessonNumber] = lesson.number.split('-')
-	if (props.inlineSelect) {
-		emit('select-lesson', { chapterNumber, lessonNumber })
-		return
-	}
-	if (props.editorLinks) {
-		router.push({
-			name: 'CourseDetail',
-			params: { courseName: props.courseName },
-			hash: '#editor',
-			query: { editLesson: lesson.number },
-		})
-	}
 }
 
 function trashLesson(lessonName: string, chapterName: string) {

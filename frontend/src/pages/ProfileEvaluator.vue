@@ -1,439 +1,273 @@
 <template>
-	<div class="mt-7 mb-20">
-		<div class="mb-4">
-			<h2 class="text-md font-semibold text-ink-gray-9">
-				{{ __('My availability') }}
-			</h2>
+	<div class="mt-7 mb-20 flex flex-col gap-12">
+		<section data-testid="availability">
+			<div class="flex items-center justify-between gap-4">
+				<h2 class="text-lg font-semibold text-ink-gray-9">
+					{{ __('Availability') }}
+				</h2>
+				<div v-if="canEdit && details" class="flex items-center gap-2">
+					<Button
+						v-if="dirty"
+						variant="outline"
+						:disabled="saving"
+						@click="discard"
+					>
+						<span class="text-p-base">{{ __('Discard') }}</span>
+					</Button>
+					<Button
+						variant="solid"
+						:disabled="!dirty"
+						:loading="saving"
+						@click="save"
+					>
+						<span class="text-p-base">{{ __('Save') }}</span>
+					</Button>
+				</div>
+			</div>
 			<p
-				v-if="evaluator.data?.timezone"
-				class="mt-1 text-sm leading-5 text-ink-gray-6"
+				v-if="readOnlyMode && isSessionUser"
+				class="mt-3 text-p-sm text-ink-gray-6"
 			>
-				{{ __('Times are in {0}').format(evaluator.data.timezone) }}
-			</p>
-		</div>
-
-		<div
-			v-if="readOnlyMode"
-			class="flex items-center gap-x-2 text-sm text-ink-gray-7 bg-surface-gray-1 px-3 py-2 rounded-5 w-full text-center"
-		>
-			<span class="lucide-circle-alert size-4" />
-			<span>
 				{{
-					__(
-						'You cannot change the availability when the site is being updated.'
-					)
+					__("You can't change your availability while the site is updating.")
 				}}
-			</span>
-		</div>
-		<div v-else>
-			<div>
-				<div
-					class="hidden md:grid md:grid-cols-4 gap-4 text-sm text-ink-gray-7 mb-4"
-				>
-					<div>
-						{{ __('Day') }}
-					</div>
-					<div>
-						{{ __('Start Time') }}
-					</div>
-					<div>
-						{{ __('End Time') }}
-					</div>
-				</div>
+			</p>
+			<ErrorMessage v-if="saveError" class="mt-3" :message="saveError" />
 
-				<div
-					v-if="evaluator.data"
-					v-for="slot in evaluator.data.slots.schedule"
-					:key="slot.name"
-					class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4 group"
-				>
-					<FormControl
-						type="select"
-						:options="days"
-						v-model="slot.day"
-						:aria-label="__('Day')"
-						@update:modelValue="update(slot.name, 'day', $event)"
-						:disabled="!isSessionUser()"
-					/>
-					<label
-						:for="`start-time-${slot.name}`"
-						class="md:sr-only block text-xs text-ink-gray-5"
-					>
-						{{ __('Start Time') }}
-					</label>
-					<FormControl
-						type="time"
-						:id="`start-time-${slot.name}`"
-						v-model="slot.start_time"
-						@update:modelValue="update(slot.name, 'start_time', $event)"
-						:disabled="!isSessionUser()"
-					/>
-					<label
-						:for="`end-time-${slot.name}`"
-						class="md:sr-only block text-xs text-ink-gray-5"
-					>
-						{{ __('End Time') }}
-					</label>
-					<FormControl
-						type="time"
-						:id="`end-time-${slot.name}`"
-						v-model="slot.end_time"
-						@update:modelValue="update(slot.name, 'end_time', $event)"
-						:disabled="!isSessionUser()"
-					/>
-					<button
-						v-if="isSessionUser()"
-						type="button"
-						:aria-label="__('Delete slot')"
-						class="lucide-x size-6 text-ink-red-8 rounded-5 cursor-pointer p-1 bg-surface-red-2 md:sr-only md:group-hover:not-sr-only md:focus:not-sr-only"
-						@click="deleteRow(slot.name)"
-					/>
-				</div>
+			<ProfileEvaluatorHours
+				v-model:week="week"
+				:can-edit="canEdit"
+				:timezone="details?.timezone"
+				:loading="loadingWeek"
+				:load-error="loadError"
+				:retrying="evaluator.loading"
+				:empty="showEmptyWeek"
+				:errors="errors"
+				@retry="retryLoad"
+				@start-week="startingWeek = true"
+			/>
 
-				<div
-					class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"
-					v-show="showSlotsTemplate"
-				>
-					<FormControl
-						type="select"
-						:options="days"
-						v-model="newSlot.day"
-						:aria-label="__('Day')"
-						@update:modelValue="add()"
-						:disabled="!isSessionUser()"
-					/>
-					<label
-						for="new-slot-start-time"
-						class="md:sr-only block text-xs text-ink-gray-5"
-					>
-						{{ __('Start Time') }}
-					</label>
-					<FormControl
-						type="time"
-						id="new-slot-start-time"
-						v-model="newSlot.start_time"
-						@update:modelValue="add()"
-						:disabled="!isSessionUser()"
-					/>
-					<label
-						for="new-slot-end-time"
-						class="md:sr-only block text-xs text-ink-gray-5"
-					>
-						{{ __('End Time') }}
-					</label>
-					<FormControl
-						type="time"
-						id="new-slot-end-time"
-						v-model="newSlot.end_time"
-						@update:modelValue="add()"
-						:disabled="!isSessionUser()"
-					/>
+			<div
+				v-if="details && hasHours"
+				class="mt-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
+				data-testid="time-off"
+			>
+				<div class="min-w-0">
+					<h3 class="text-base font-semibold text-ink-gray-9">
+						<label for="time-off">{{ __('Time off') }}</label>
+					</h3>
+					<p class="mt-1 text-p-sm text-ink-gray-6">
+						{{ timeOffDescription }}
+					</p>
 				</div>
-
-				<Button v-if="isSessionUser()" @click="showSlotsTemplate = 1">
-					<template #prefix>
-						<span class="lucide-plus size-4 text-ink-gray-7" />
+				<DateRangePicker
+					id="time-off"
+					v-model="timeOff"
+					class="w-full sm:w-64"
+					variant="outline"
+					format="MMM D YYYY"
+					:placeholder="canEdit ? __('Select dates') : __('No time off')"
+					:disabled="!canEdit"
+				>
+					<template #suffix="{ open, setOpen }">
+						<button
+							v-if="canEdit && timeOff.length"
+							type="button"
+							class="lucide-x size-4 cursor-pointer text-ink-gray-6 hover:text-ink-gray-8"
+							:aria-label="__('Clear time off')"
+							@mousedown.prevent
+							@click="timeOff = []"
+						/>
+						<span
+							v-else
+							class="lucide-chevron-down size-4 cursor-pointer"
+							@mousedown.prevent="setOpen(!open)"
+						/>
 					</template>
-					{{ __('Add Slot') }}
-				</Button>
+				</DateRangePicker>
 			</div>
-			<div class="my-10">
-				<h2 class="mb-4 text-md font-semibold text-ink-gray-9">
-					{{ __('I am unavailable') }}
-				</h2>
-				<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-					<FormControl
-						type="date"
-						:label="__('From')"
-						v-model="from"
-						:disabled="!isSessionUser()"
-						@update:modelValue="
-							(value) => {
-								updateUnavailability.submit({
-									field: 'unavailable_from',
-									value,
-								})
-							}
-						"
-					/>
-					<FormControl
-						type="date"
-						:label="__('To')"
-						v-model="to"
-						:disabled="!isSessionUser()"
-						@update:modelValue="
-							(value) => {
-								updateUnavailability.submit({
-									field: 'unavailable_to',
-									value,
-								})
-							}
-						"
-					/>
-				</div>
-			</div>
-			<div v-if="isSessionUser()">
-				<h2 class="mb-4 text-md font-semibold text-ink-gray-9">
-					{{ __('My calendar') }}
-				</h2>
-				<div
-					v-if="evaluator.data?.calendar && evaluator.data?.is_authorized"
-					class="flex items-center bg-surface-green-2 text-ink-green-8 text-sm p-1 rounded-5 mb-4 w-fit"
-				>
-					<span class="lucide-check size-4 me-2" />
-					{{ __('Your calendar is set.') }}
-				</div>
-				<Button class="text-p-base-medium" @click="startCalendarAuthorization">
-					{{ __('Authorize Google Calendar Access') }}
-				</Button>
-			</div>
-		</div>
+		</section>
+
+		<ProfileEvaluatorCalendar
+			v-if="showCalendar"
+			:details="details"
+			:dirty="dirty"
+			@changed="setCalendar"
+		/>
 	</div>
 </template>
-<script setup>
-// The slots are stored as bare wall-clock times and read as system time
-// everywhere downstream, so the editor has to name the clock it means.
-import { createResource, FormControl, Button, Badge, toast } from 'frappe-ui'
-import { computed, reactive, ref, onMounted, inject, watch } from 'vue'
-import { convertToTitleCase } from '@/utils'
-import { openExternal } from '@/utils/openExternal'
+<script setup lang="ts">
+// Slots are bare wall-clock times read as system time everywhere downstream,
+// so the editor names the clock. Edits stay local until Save.
+import {
+	Button,
+	createResource,
+	DateRangePicker,
+	ErrorMessage,
+	toast,
+} from 'frappe-ui'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { EvaluatorDetails, Resource, SessionUser } from '@/types/api'
+import ProfileEvaluatorCalendar from '@/components/Profile/ProfileEvaluatorCalendar.vue'
+import ProfileEvaluatorHours from '@/components/Profile/ProfileEvaluatorHours.vue'
+import { resourceErrorMessage } from '@/utils/resource'
+import {
+	WEEKDAYS,
+	emptyWeek,
+	rangeErrors,
+	toRows,
+	toTimeOff,
+	toWeek,
+} from '@/utils/evaluatorAvailability'
+import type { TimeOff, Week, Weekday } from '@/utils/evaluatorAvailability'
 
-const user = inject('$user')
-const readOnlyMode = window.read_only_mode
-
-const props = defineProps({
-	profile: {
-		type: Object,
-		required: true,
-	},
-})
-
-onMounted(() => {
-	if (user.data?.name !== props.profile.data?.name && !hasHigherAccess()) {
-		window.location.href = `/user/${props.profile.data?.username}`
-	}
-})
-
-const hasHigherAccess = () => {
-	return user.data?.is_evaluator || user.data?.is_moderator
+interface ProfileData {
+	name?: string
+	username?: string
 }
 
-const isSessionUser = () => {
-	return user.data?.email === props.profile.data?.name
-}
+const props = defineProps<{ profile: { data: ProfileData | null } }>()
 
-const showSlotsTemplate = ref(0)
-const from = ref(null)
-const to = ref(null)
+const user = inject<SessionUser>('$user')
+const route = useRoute()
+const router = useRouter()
+const readOnlyMode = Boolean(window.read_only_mode)
 
-const newSlot = reactive({
-	day: '',
-	start_time: '',
-	end_time: '',
-})
+const isSessionUser = computed(
+	() =>
+		Boolean(props.profile.data?.username) &&
+		user?.data?.username === props.profile.data?.username
+)
+const canEdit = computed(() => isSessionUser.value && !readOnlyMode)
+const showCalendar = computed(() => isSessionUser.value && !readOnlyMode)
 
 const evaluator = createResource({
 	url: 'lms.lms.api.get_evaluator_details',
-	params: {
-		evaluator: props.profile.data?.name,
-	},
+	params: { evaluator: props.profile.data?.name },
 	auto: true,
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-		console.error(err)
+	onError(err: unknown) {
+		toast.error(resourceErrorMessage(err))
 	},
-})
+}) as Resource<EvaluatorDetails | null>
 
-watch(evaluator, () => {
-	if (evaluator.data?.slots?.unavailable_from)
-		from.value = evaluator.data.slots.unavailable_from
-	if (evaluator.data?.slots?.unavailable_to)
-		to.value = evaluator.data.slots.unavailable_to
+const details = computed(() => evaluator.data)
 
-	evaluator.data?.slots?.schedule.forEach((slot) => {
-		slot.start_time = formatTime(slot.start_time)
-		slot.end_time = formatTime(slot.end_time)
+const week = ref<Week>(emptyWeek())
+const timeOff = ref<TimeOff>([])
+const baseline = ref('')
+const startingWeek = ref(false)
+const saving = ref(false)
+const saveError = ref('')
+
+const snapshot = (): string =>
+	JSON.stringify({
+		rows: toRows(week.value),
+		timeOff: timeOff.value,
 	})
-})
 
-const formatTime = (time) => {
-	if (!time) return ''
-	const [hour, minute] = time.split(':')
-	return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+const load = (data: EvaluatorDetails | null) => {
+	week.value = toWeek(data?.slots?.schedule ?? [])
+	timeOff.value = toTimeOff(data?.slots)
+	baseline.value = snapshot()
+	startingWeek.value = false
+	saveError.value = ''
 }
 
-// Availability goes through lms.lms.api rather than frappe.client.*: the raw
-// framework endpoints fall back to Course Evaluator's role permissions, which
-// grant blanket write to Moderator, Batch Evaluator and Course Creator with no
-// owner condition, so anyone holding one could edit anyone else's calendar.
-const createSlot = createResource({
-	url: 'lms.lms.api.add_evaluator_slot',
-	makeParams(values) {
-		return {
-			evaluator: props.profile.data?.name,
-			...newSlot,
-		}
-	},
-	onSuccess() {
-		toast.success(__('Slot added successfully'))
-		evaluator.reload()
-		showSlotsTemplate.value = 0
-		newSlot.day = ''
-		newSlot.start_time = ''
-		newSlot.end_time = ''
-	},
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
-
-const updateSlot = createResource({
-	url: 'lms.lms.api.update_evaluator_slot',
-	makeParams(values) {
-		return {
-			evaluator: props.profile.data?.name,
-			slot: values.name,
-			fieldname: values.field,
-			value: values.value,
-		}
-	},
-	onSuccess() {
-		toast.success(__('Availability updated successfully'))
-	},
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
-
-const deleteSlot = createResource({
-	url: 'lms.lms.api.delete_evaluator_slot',
-	makeParams(values) {
-		return {
-			evaluator: props.profile.data?.name,
-			slot: values.name,
-		}
-	},
-	onSuccess() {
-		toast.success(__('Slot deleted successfully'))
-		evaluator.reload()
-	},
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
-
-// The unavailability date controls call this from `@update:modelValue`, not
-// `@blur`: the date control renders as a popover, so a native listener bound as
-// a fallthrough attr is not reliably reached.
-const updateUnavailability = createResource({
-	url: 'lms.lms.api.set_evaluator_unavailability',
-	makeParams(values) {
-		return {
-			evaluator: props.profile.data?.name,
-			fieldname: values.field,
-			value: values.value,
-		}
-	},
-	onSuccess() {
-		toast.success(__('Unavailability updated successfully'))
-	},
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
-
-const update = (name, field, value) => {
-	updateSlot.submit(
-		{
-			name,
-			field,
-			value,
-		},
-		{
-			validate() {
-				if (!value) {
-					return `Please enter a value for ${convertToTitleCase(field)}`
-				}
-			},
-		}
-	)
-}
-
-const add = () => {
-	if (!newSlot.day || !newSlot.start_time || !newSlot.end_time) {
-		return
+// Watches slots alone: a calendar change patches the details and must keep
+// unsaved hours.
+watch(
+	() => evaluator.data?.slots,
+	() => load(evaluator.data),
+	{
+		immediate: true,
 	}
-	if (createSlot.loading) {
-		return
-	}
-	createSlot.submit()
-}
+)
 
-const deleteRow = (name) => {
-	deleteSlot.submit({ name })
-}
+const dirty = computed(() => snapshot() !== baseline.value)
 
-// The calendar record is created here rather than by the page load: reading a
-// profile must not write documents in that user's name.
-const ensureCalendar = createResource({
-	url: 'lms.lms.api.ensure_evaluator_calendar',
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
+const hasHours = computed(() =>
+	WEEKDAYS.some((day) => week.value[day].length > 0)
+)
 
-const authorizeCalendar = createResource({
-	url: 'frappe.integrations.doctype.google_calendar.google_calendar.authorize_access',
-	makeParams(values) {
-		return {
-			g_calendar: values.calendar,
-			reauthorize: 1,
+const loadingWeek = computed(() => !details.value && !evaluator.error)
+// Without the saved week, editing would start from seven empty days and
+// Save would replace the real one with it.
+const loadError = computed(() => !details.value && Boolean(evaluator.error))
+// onError has already shown the failure.
+const retryLoad = () => evaluator.reload().catch(() => {})
+
+// Seven empty rows read as a broken list, so a week with nothing saved
+// starts as an empty state until the evaluator chooses to add hours.
+const showEmptyWeek = computed(
+	() => Boolean(details.value) && !hasHours.value && !startingWeek.value
+)
+
+const errors = computed(
+	() =>
+		Object.fromEntries(
+			WEEKDAYS.map((day) => [day, rangeErrors(week.value[day])])
+		) as Record<Weekday, Record<number, string>>
+)
+
+const hasErrors = computed(() =>
+	WEEKDAYS.some((day) => Object.keys(errors.value[day]).length > 0)
+)
+
+const timeOffDescription = computed(() =>
+	isSessionUser.value
+		? __("Learners can't book you during time off.")
+		: __("Learners can't book this evaluator during time off.")
+)
+
+const discard = () => load(evaluator.data)
+
+const saveAvailability = createResource({
+	url: 'lms.lms.api.save_evaluator_availability',
+}) as Resource<EvaluatorDetails>
+
+const save = async () => {
+	if (hasErrors.value || !details.value) return
+	saving.value = true
+	saveError.value = ''
+	// The time off row is hidden with no hours, so it saves as none.
+	const [from, to] = hasHours.value ? timeOff.value : []
+	const sent = snapshot()
+	try {
+		const saved = await saveAvailability.submit({
+			schedule: toRows(week.value),
+			unavailable_from: from ?? null,
+			unavailable_to: to ?? null,
+		})
+		// The fields stay editable while saving; setData reloads them from the
+		// save, so edits made in the meantime go back on top, still unsaved.
+		const edits =
+			snapshot() === sent ? null : { week: week.value, timeOff: timeOff.value }
+		evaluator.setData(saved)
+		if (edits) {
+			await nextTick()
+			week.value = edits.week
+			timeOff.value = edits.timeOff
 		}
-	},
-	onSuccess(data) {
-		openExternal(data.url)
-	},
-	onError(err) {
-		toast.error(err.messages?.[0] || err)
-	},
-})
-
-const startCalendarAuthorization = async () => {
-	const calendar = evaluator.data?.calendar || (await ensureCalendar.submit())
-	if (!calendar) return
-	authorizeCalendar.submit({ calendar })
+		toast.success(__('Availability saved'))
+	} catch (err) {
+		saveError.value = resourceErrorMessage(err)
+	} finally {
+		saving.value = false
+	}
 }
 
-const days = computed(() => {
-	return [
-		{
-			label: 'Monday',
-			value: 'Monday',
-		},
-		{
-			label: 'Tuesday',
-			value: 'Tuesday',
-		},
-		{
-			label: 'Wednesday',
-			value: 'Wednesday',
-		},
-		{
-			label: 'Thursday',
-			value: 'Thursday',
-		},
-		{
-			label: 'Friday',
-			value: 'Friday',
-		},
-		{
-			label: 'Saturday',
-			value: 'Saturday',
-		},
-		{
-			label: 'Sunday',
-			value: 'Sunday',
-		},
-	]
+const setCalendar = (calendar: EvaluatorDetails['calendar']) => {
+	if (evaluator.data) evaluator.setData({ ...evaluator.data, calendar })
+}
+
+onMounted(() => {
+	// Google sends the evaluator back here; a failed sign-in says so in the URL.
+	if (route.query.calendar === 'failed') {
+		toast.error(
+			__('Google did not finish connecting your calendar. Try again.')
+		)
+		router.replace({ query: { ...route.query, calendar: undefined } })
+	}
 })
 </script>

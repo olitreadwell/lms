@@ -22,7 +22,7 @@
 							class="space-y-5 border rounded-5 p-2 pt-4 max-h-[50vh] sm:max-h-[70vh] overflow-y-auto"
 						>
 							<div
-								class="grid grid-cols-[60%,40%] sm:grid-cols-[70%,30%] text-sm text-ink-gray-5"
+								class="grid grid-cols-[60%,40%] sm:grid-cols-[70%,30%] text-sm text-ink-gray-6"
 							>
 								<div class="px-4">
 									{{ __('Member') }}
@@ -88,7 +88,7 @@
 						</div>
 					</div>
 				</div>
-				<div v-else class="text-sm text-ink-gray-5">
+				<div v-else class="text-sm text-ink-gray-6">
 					{{ __('No statistics available for this video.') }}
 				</div>
 			</div>
@@ -96,13 +96,7 @@
 	</Dialog>
 </template>
 <script setup lang="ts">
-import {
-	Avatar,
-	createListResource,
-	Dialog,
-	FormControl,
-	TabButtons,
-} from 'frappe-ui'
+import { Avatar, createListResource, Dialog, TabButtons } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 import { enablePlyr, formatTimestamp } from '@/utils'
 import VideoBlock from '@/components/VideoBlock.vue'
@@ -246,27 +240,18 @@ const tabs = computed(() => {
 })
 </script>
 <style>
-/* token-exempt-start: scrim on the video, not the page */
-.plyr__control--overlaid {
-	background: radial-gradient(
-		circle,
-		rgba(0, 0, 0, 0.4) 0%,
-		rgba(0, 0, 0, 0.5) 50%
-	);
-}
-/* token-exempt-end */
-
 .plyr__control:hover {
 	background: none;
 }
 
 .plyr--video {
-	border: 1px solid var(--outline-gray-2);
 	border-radius: 8px;
 }
 
+/* token-exempt-start: range fill on the video, not the page */
 :root {
 	--plyr-range-fill-background: white;
 	--plyr-video-control-background-hover: transparent;
 }
+/* token-exempt-end */
 </style>

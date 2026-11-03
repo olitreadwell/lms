@@ -24,7 +24,7 @@
 						<div class="text-ink-gray-9 font-medium">
 							{{ __('Available Slots') }}
 						</div>
-						<div v-if="scheduleTimezone" class="text-sm text-ink-gray-5">
+						<div v-if="scheduleTimezone" class="text-sm text-ink-gray-6">
 							{{ __('All times in {0}').format(scheduleTimezone) }}
 						</div>
 					</div>
@@ -40,14 +40,14 @@
 									{{ dayjs(row.display_date).format('DD MMMM YYYY') }}
 								</div>
 								<div>&middot;</div>
-								<div class="text-ink-gray-5">
+								<div class="text-ink-gray-6">
 									{{ row.display_day }}
 								</div>
 								<template
 									v-if="row.display_timezone_label !== scheduleTimezone"
 								>
 									<div>&middot;</div>
-									<div class="text-ink-gray-5">
+									<div class="text-ink-gray-6">
 										{{ row.display_timezone_label }}
 									</div>
 								</template>
@@ -71,7 +71,7 @@
 									{{ formatTime(slot.display_end_time) }}
 									<sup
 										v-if="endsOnAnotherDay(slot, row)"
-										class="text-ink-gray-5 ms-0.5"
+										class="text-ink-gray-6 ms-0.5"
 									>
 										+1
 									</sup>
@@ -128,7 +128,7 @@ const evaluation = ref({
 function submitEvaluation(close) {
 	if (!evaluation.value.date || !evaluation.value.start_time) {
 		toast.warning(__('Please select a slot for your evaluation.'), {
-			duration: 10,
+			duration: 10000,
 		})
 		return
 	}
@@ -145,14 +145,14 @@ function submitEvaluation(close) {
 		})
 		.catch((err) => {
 			console.log(err.messages?.[0] || err)
-			toast.warning(__(err.messages?.[0] || err), { duration: 20 })
+			toast.warning(__(err.messages?.[0] || err), { duration: 20000 })
 		})
 }
 
 const getCourses = () => {
 	const courses = []
 	for (const course of props.courses) {
-		if (course.evaluator) {
+		if (course.has_evaluator) {
 			courses.push({
 				label: course.title,
 				value: course.course,

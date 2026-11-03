@@ -11,7 +11,10 @@
 		>
 			<source :src="safeUrl(encodeURI(file))" type="audio/mp3" />
 		</audio>
-		<div class="flex items-center gap-x-2 shadow rounded-6 p-1 w-1/2">
+		<div
+			data-testid="audio-player"
+			class="flex items-center gap-x-2 rounded-7 overflow-hidden p-1 w-1/2"
+		>
 			<Button
 				variant="ghost"
 				:label="isPlaying ? __('Pause') : __('Play')"

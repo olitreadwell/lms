@@ -8,6 +8,7 @@
  "engine": "InnoDB",
  "field_order": [
   "title",
+  "authors",
   "published",
   "column_break_cwjx",
   "enforce_course_order",
@@ -21,6 +22,12 @@
   "member_count"
  ],
  "fields": [
+  {
+   "fieldname": "authors",
+   "fieldtype": "Table MultiSelect",
+   "label": "Authors",
+   "options": "LMS Content Author"
+  },
   {
    "fieldname": "program_courses",
    "fieldtype": "Table",
@@ -93,7 +100,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-02-03 10:51:50.616781",
+ "modified": "2026-10-22 15:23:42.430380",
  "modified_by": "sayali@frappe.io",
  "module": "LMS",
  "name": "LMS Program",
@@ -141,6 +148,24 @@
   {
    "read": 1,
    "role": "LMS Student"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Moderator",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Course Creator",
+   "write": 1
   }
  ],
  "row_format": "Dynamic",

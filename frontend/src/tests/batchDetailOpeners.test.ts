@@ -16,7 +16,7 @@ const { batchResource, createResourceMock } = vi.hoisted(() => ({
 			name: 'B1',
 			title: 'Batch One',
 			certification: 1,
-			students: ['a@example.com'],
+			student_count: 1,
 		} as Record<string, unknown>,
 		loading: false,
 		fetched: true,
@@ -123,7 +123,6 @@ const mountPage = async (router: Router) => {
 			provide: {
 				$user: { data: { name: 'mod@example.com', is_moderator: true } },
 			},
-			stubs: { teleport: true },
 			mocks: { __: (text: string) => text },
 		},
 	})

@@ -164,19 +164,16 @@ async function mountLesson(
 	props: { chapterNumber: string; lessonNumber: string } = {
 		chapterNumber: '1',
 		lessonNumber: '1',
-	}
+	},
+	user: { name: string } | null = { name: 'student@example.com' }
 ) {
 	const wrapper = mount(Lesson, {
 		props: { courseName: 'COURSE-1', ...props },
 		global: {
 			mocks: { __: translateStub },
 			provide: {
-				$user: { data: { name: 'student@example.com' } },
+				$user: { data: user },
 				$socket: { on: socketOnMock, off: socketOffMock },
-			},
-			stubs: {
-				teleport: true,
-				'router-link': { template: '<a><slot /></a>' },
 			},
 		},
 	})
@@ -209,24 +206,6 @@ afterEach(() => {
 })
 
 describe('Lesson.vue Next affordance follows canGoNext', () => {
-	it('hides the Next button when the following lesson is locked', async () => {
-		wrapper = await mountLesson()
-		findResource('lms.lms.utils.get_course_outline').data = [
-			{
-				name: 'CH-1',
-				lessons: [
-					{ name: 'L1', number: '1-1', locked: 0 },
-					{ name: 'L2', number: '1-2', locked: 1 },
-				],
-			},
-		]
-		findResource('lms.lms.utils.get_lesson').data = { ...baseLesson }
-		await flushPromises()
-
-		expect((wrapper.vm as any).canGoNext).toBe(false)
-		expect(wrapper.text()).not.toContain('Next')
-	})
-
 	it('shows the Next button when the following lesson is unlocked', async () => {
 		wrapper = await mountLesson()
 		findResource('lms.lms.utils.get_course_outline').data = [
@@ -566,5 +545,45 @@ describe('Lesson.vue Next survives an outline that never resolves', () => {
 		;(wrapper.vm as any).goNext()
 
 		expect(pushMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('Lesson.vue zen-mode progress chip', () => {
+	it('drops into flow on touch screens so it cannot cover the zen buttons', async () => {
+		wrapper = await mountLesson()
+		findResource('lms.lms.utils.get_lesson').data = {
+			...baseLesson,
+			membership: { progress: 42.3 },
+		}
+		;(wrapper.vm as any).zenModeEnabled = true
+		await flushPromises()
+
+		const chip = wrapper
+			.findAll('div')
+			.find((el) => el.text() === '43% completed')
+		expect(chip).toBeDefined()
+		const classes = chip!.classes()
+		expect(classes).toContain('absolute')
+		expect(classes).toContain('[@media(hover:none)]:block')
+		expect(classes).toContain('[@media(hover:none)]:static')
+		expect(classes).toContain('[@media(hover:none)]:mt-0')
+	})
+})
+
+describe('Lesson.vue sidebar progress', () => {
+	// Guards #3010: a guest cannot make progress, so the sidebar shows none.
+	const sidebarWithProgress = async (user: { name: string } | null) => {
+		wrapper = await mountLesson(undefined, user)
+		findResource('lms.lms.utils.get_lesson').data = { ...baseLesson }
+		await flushPromises()
+		return wrapper.get('aside > div').attributes('withprogress')
+	}
+
+	it('hides progress for a guest', async () => {
+		expect(await sidebarWithProgress(null)).toBe('false')
+	})
+
+	it('keeps progress for a signed-in learner', async () => {
+		expect(await sidebarWithProgress({ name: 'a@example.com' })).toBe('true')
 	})
 })

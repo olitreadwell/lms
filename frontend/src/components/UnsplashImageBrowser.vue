@@ -1,6 +1,6 @@
 <template>
 	<Popover bare>
-		<template #trigger="{ open, setOpen }" class="flex w-full">
+		<template #trigger="{ open, setOpen }">
 			<slot v-bind="{ open, setOpen }"></slot>
 		</template>
 		<template #default>
@@ -69,7 +69,13 @@
 
 <script setup>
 // import { Popover, PopoverButton, PopoverPanel } from '@headlessui/vue'
-import { Popover, FileUploader, Button, createResource } from 'frappe-ui'
+import {
+	Popover,
+	FileUploader,
+	Button,
+	TextInput,
+	createResource,
+} from 'frappe-ui'
 import { ref, watch } from 'vue'
 import { safeUrl } from '@/utils/safeUrl'
 

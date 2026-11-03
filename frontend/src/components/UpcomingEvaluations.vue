@@ -27,6 +27,7 @@
 			v-else-if="endDateHasPassed"
 			theme="red"
 			class="mb-4"
+			:title="__('Scheduling closed')"
 			:description="
 				__(
 					'The deadline to schedule evaluations has passed. Please contact the Instructor for assistance.'
@@ -195,7 +196,7 @@ const openEvalCall = (evl) => {
 
 const evaluationCourses = computed(() => {
 	return props.courses.filter((course) => {
-		return course.evaluator && course.evaluator != ''
+		return course.has_evaluator
 	})
 })
 

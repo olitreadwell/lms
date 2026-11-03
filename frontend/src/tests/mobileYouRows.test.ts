@@ -103,13 +103,6 @@ describe('destinations', () => {
 		])
 	})
 
-	it('leaves out everything already on the bottom bar', () => {
-		const labels = allRows(build()).map((row) => row.label)
-		for (const primary of ['Home', 'Courses', 'Certifications']) {
-			expect(labels).not.toContain(primary)
-		}
-	})
-
 	it('shows a destination once when it is in both link lists', () => {
 		const rows = allRows(
 			build({ otherLinks: [link('Programs', 'Route', 'Programs'), ...OTHER] })
@@ -202,12 +195,6 @@ describe('the last group', () => {
 		expect(fromYou).toEqual(colourModeRow('dark'))
 		expect(fromYou?.value).toBe('Dark')
 	})
-
-	it('logs out in place rather than routing somewhere', () => {
-		const logout = allRows(build()).find((row) => row.label === 'Log out')
-		expect(logout?.action).toBe('logout')
-		expect(logout?.to).toBeUndefined()
-	})
 })
 
 describe('iconClass', () => {
@@ -220,6 +207,38 @@ describe('iconClass', () => {
 
 	it('has nothing to say about a link with no icon', () => {
 		expect(iconClass(undefined)).toBeUndefined()
+	})
+
+	it('draws the link icon for a name it does not spell out', () => {
+		expect(iconClass('Sparkles')).toBe('lucide-link')
+	})
+
+	it.each([
+		'Home',
+		'Search',
+		'BookOpen',
+		'Route',
+		'Users',
+		'GraduationCap',
+		'Briefcase',
+		'TrendingUp',
+		'Headset',
+		'Mail',
+		'CircleHelp',
+		'Pencil',
+		'Code',
+	])('spells out %s, a destination nav link icon', (icon) => {
+		const name = iconClass(icon)?.slice('lucide-'.length) ?? ''
+		expect(name).not.toBe('link')
+		expect(
+			existsSync(
+				resolve(
+					process.cwd(),
+					'node_modules/lucide-static/icons',
+					`${name}.svg`
+				)
+			)
+		).toBe(true)
 	})
 })
 

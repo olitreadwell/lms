@@ -29,13 +29,13 @@
 					v-model="tagsArray"
 					:options="tagOptions"
 					:placeholder="__('Add tag')"
-					variant="outline"
-					class="w-full justify-between"
 					@update:query="tagQuery = $event"
 				>
 					<template #trigger="{ open, selectedOptions }">
 						<button
+							:id="tagsTriggerId"
 							type="button"
+							:aria-labelledby="`${tagsLabelId} ${tagsTriggerId}`"
 							:aria-expanded="open"
 							:class="[
 								'relative inline-flex w-full min-h-7 items-center gap-2 rounded-4 border border-outline-gray-2 bg-surface-base px-2 text-start text-base text-ink-gray-8 outline-none transition-colors hover:border-outline-gray-3 hover:shadow-sm focus:border-outline-gray-4 focus:shadow-sm',
@@ -101,6 +101,7 @@ interface TagOption {
 }
 
 const tagsLabelId = useId()
+const tagsTriggerId = useId()
 const { resource, markDirty } = inject<CourseFormContext>('courseForm')!
 
 const doc = computed(() => resource.doc)

@@ -19,9 +19,14 @@ const { resource } = vi.hoisted(() => ({
 vi.mock('frappe-ui', () => ({
 	createResource: resource,
 	createListResource: resource,
+	ScrollArea: { template: `<div><slot /></div>` },
 	call: vi.fn(),
-	Button: { template: `<button><slot /></button>` },
 	Tooltip: { template: `<div><slot /></div>` },
+	Sidebar: { template: `<nav><slot /></nav>` },
+	SidebarCard: { template: `<div />` },
+	SidebarCollapseToggle: { template: `<button />` },
+	SidebarItem: { template: `<div />` },
+	SidebarSection: { template: `<div><slot /></div>` },
 }))
 
 vi.mock('@framework/ui/components/TrialBanner/index', () => ({
@@ -64,9 +69,6 @@ vi.mock('@/components/Icons/InviteIcon.vue', () => ({
 vi.mock('@/components/Icons/LMSLogo.vue', () => ({
 	default: { template: `<div />` },
 }))
-vi.mock('@/components/Icons/CollapseSidebar.vue', () => ({
-	default: { template: `<div />` },
-}))
 vi.mock('@/components/Sidebar/UserDropdown.vue', () => ({
 	default: { template: `<div />` },
 }))
@@ -90,7 +92,7 @@ function press(init: KeyboardEventInit = {}) {
 			bubbles: true,
 			cancelable: true,
 			...init,
-		}),
+		})
 	)
 }
 

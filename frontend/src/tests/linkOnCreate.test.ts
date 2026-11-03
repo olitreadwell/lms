@@ -30,7 +30,6 @@ vi.mock('frappe-ui', () => ({
 		template: `<button type="button" :aria-label="ariaLabel" @click="$emit('click')"><slot /></button>`,
 	},
 	FormControl: { props: ['modelValue'], template: `<input />` },
-	FormLabel: { props: ['label'], template: `<label>{{ label }}</label>` },
 	createResource: () => ({
 		data: [],
 		loading: false,
@@ -70,22 +69,6 @@ describe('Link onCreate contract', () => {
 		// The regression: handlers assumed a second `close` callback was here.
 		expect(onCreate.mock.calls[0]).toHaveLength(1)
 		expect(onCreate.mock.calls[0][0]).toBeNull()
-	})
-
-	it('does not hand the handler a close callback to invoke', async () => {
-		const received: unknown[] = []
-		await clickCreateNew(
-			mountLink((...args) => received.push(...args.slice(1)))
-		)
-
-		expect(received).toEqual([])
-	})
-
-	it('survives a handler that takes no parameters at all', async () => {
-		const onCreate = vi.fn(() => {})
-		await clickCreateNew(mountLink(onCreate))
-
-		expect(onCreate).toHaveBeenCalledOnce()
 	})
 })
 

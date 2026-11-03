@@ -32,7 +32,7 @@
 					class="flex flex-col items-center gap-1 px-3 text-center"
 				>
 					<span class="lucide-circle-check size-5 text-ink-green-5" />
-					<span class="text-xs text-ink-gray-5">
+					<span class="text-xs text-ink-gray-6">
 						{{ __("Saved. This format can't be previewed here.") }}
 					</span>
 				</div>
@@ -80,7 +80,7 @@
 						{{ __('Remove') }}
 					</Button>
 				</div>
-				<p class="text-p-sm text-ink-gray-5">
+				<p class="text-p-sm text-ink-gray-6">
 					{{
 						__(
 							'Uploaded video. Students see it on the course page. Remove it to use a YouTube link instead.'
@@ -112,7 +112,7 @@
 						</Button>
 					</template>
 				</FileUploader>
-				<p class="text-p-sm text-ink-gray-5">
+				<p class="text-p-sm text-ink-gray-6">
 					{{
 						preview.type === 'youtube'
 							? __(
@@ -135,7 +135,13 @@
 </template>
 
 <script setup lang="ts">
-import { Button, FileUploader, FormControl, toast } from 'frappe-ui'
+import {
+	Button,
+	FileUploader,
+	FormControl,
+	UploadError,
+	toast,
+} from 'frappe-ui'
 import {
 	InputDescription,
 	InputError,
@@ -191,13 +197,15 @@ async function validatePlayableVideo(file: File): Promise<string | void> {
 	}
 }
 
+function uploadErrorMessage(error: unknown): string {
+	if (typeof error === 'string') return error
+	if (error instanceof UploadError) return error.messages[0] || error.message
+	if (error instanceof Error) return error.message || __('Upload failed')
+	return __('Upload failed')
+}
+
 function onUploadFailure(error: unknown) {
-	const e = error as { messages?: string[]; message?: string } | string
-	const msg =
-		typeof e === 'string'
-			? e
-			: e?.messages?.[0] || e?.message || __('Upload failed')
-	toast.error(msg)
+	toast.error(uploadErrorMessage(error))
 }
 
 const props = defineProps<{
