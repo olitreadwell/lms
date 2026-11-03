@@ -19,7 +19,7 @@
 					<div class="text-p-base-medium text-ink-gray-7">
 						{{ __('Provider') }}
 					</div>
-					<div class="text-p-sm text-ink-gray-5">
+					<div class="text-p-sm text-ink-gray-6">
 						{{ __('Choose a provider to configure its credentials.') }}
 					</div>
 				</div>
@@ -70,26 +70,15 @@
 			<template v-if="rowFields.length">
 				<div class="h-px border-t border-outline-elevation-2" />
 
-				<div
+				<SwitchRow
 					v-for="field in toggleFields"
 					:key="field.name"
-					class="flex items-center justify-between gap-8"
-				>
-					<div class="flex min-w-0 flex-col">
-						<div class="text-p-base-medium text-ink-gray-7">
-							{{ __(field.label) }}
-						</div>
-						<div v-if="field.description" class="text-p-sm text-ink-gray-5">
-							{{ __(field.description) }}
-						</div>
-					</div>
-					<Switch
-						size="sm"
-						:model-value="Boolean(doc[field.name])"
-						:aria-label="__(field.label)"
-						@update:model-value="(on: boolean) => setCheck(field, on)"
-					/>
-				</div>
+					size="sm"
+					:label="__(field.label)"
+					:description="field.description ? __(field.description) : undefined"
+					:model-value="Boolean(doc[field.name])"
+					@update:model-value="(on: boolean) => setCheck(field, on)"
+				/>
 
 				<ImageUploadField
 					v-for="field in uploadFields"
@@ -113,13 +102,14 @@ import {
 	FormControl,
 	LoadingIndicator,
 	Password,
-	Switch,
 	call,
 	createDocumentResource,
 	toast,
 } from 'frappe-ui'
+import type { FrappeResourceError } from 'frappe-ui'
 import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import ImageUploadField from '@/components/Controls/ImageUploadField.vue'
+import SwitchRow from '@/components/Controls/SwitchRow.vue'
 import SettingsLayout from '@/components/Layouts/settings/desktop/SettingsLayout.vue'
 import {
 	DOCTYPE,
@@ -222,7 +212,7 @@ const seedDraft = () => {
 	for (const field of fields.value) draft[field.name] = field.default ?? ''
 }
 
-const reportError = (err: any, fallback: string) =>
+const reportError = (err: FrappeResourceError, fallback: string) =>
 	toast.error(cleanError(err?.messages?.[0] || err) || fallback)
 
 /**
@@ -249,7 +239,7 @@ const loadGateway = async (gateway: string) => {
 			// resource fetches on its own. frappe-ui nulls `doc` on a failed get,
 			// which `loading` reads as "still loading", so a deleted or
 			// unreadable record would otherwise spin forever.
-			onError: (err: any) => {
+			onError: (err: FrappeResourceError) => {
 				reportError(err, __('Error loading payment gateway'))
 				emit('back')
 			},

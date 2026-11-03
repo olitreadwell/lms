@@ -17,7 +17,7 @@
 						size="md"
 						icon-left="lucide-chevron-left"
 						:label="title"
-						class="-ms-3.5 !max-w-96 !justify-start !pe-0 text-p-lg-semibold cursor-pointer hover:bg-transparent hover:opacity-70 focus:bg-transparent focus:outline-none focus:ring-0 active:bg-transparent active:text-ink-gray-5"
+						class="-ms-3.5 !max-w-96 !justify-start !pe-0 text-p-lg-semibold cursor-pointer hover:bg-transparent hover:opacity-70 focus:bg-transparent active:bg-transparent active:text-ink-gray-6"
 						@click="emit('back')"
 					/>
 					<h2 v-else-if="title" class="text-p-lg-semibold text-ink-gray-8">
@@ -45,7 +45,7 @@
 				v-if="$slots.actions || enabled !== undefined"
 				class="flex min-h-5 shrink-0 items-center gap-3"
 			>
-				<Switch
+				<SwitchRow
 					v-if="enabled !== undefined"
 					v-model="enabled"
 					size="sm"
@@ -63,9 +63,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Badge, Button, Switch } from 'frappe-ui'
+import { Badge, Button } from 'frappe-ui'
 import type { BadgeProps } from 'frappe-ui'
 import type { AutosaveStatus } from '@/composables/useAutosave'
+import SwitchRow from '@/components/Controls/SwitchRow.vue'
 
 // The header of every settings panel, in two variants: "back" is the title
 // itself as a control (CRM's EditEmailTemplate), used by sub-pages; "plain"

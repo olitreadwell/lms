@@ -1,5 +1,5 @@
 <template>
-	<FormShell :title="__('Make an Announcement')" size="xl" @close="close">
+	<FormShell :title="__('New Announcement')" size="xl" @close="close">
 		<template #default>
 			<div v-if="loadingBatch" class="p-4 text-base text-ink-gray-6">
 				{{ __('Loading...') }}
@@ -18,7 +18,7 @@
 			>
 				<HeaderButton
 					data-testid="announcement-save"
-					:label="__('Save')"
+					:label="__('Send')"
 					variant="solid"
 					:loading="announcementResource.loading"
 					@click="makeAnnouncement()"
@@ -78,7 +78,9 @@ const batch = useBatchDetails(() => props.batchName)
 const loadingBatch = computed(() => !batch.data && batch.loading)
 
 const isAdmin = computed(() =>
-	Boolean(user.data?.is_moderator || user.data?.is_evaluator)
+	Boolean(
+		user.data?.is_moderator || user.data?.is_evaluator || batch.data?.can_manage
+	)
 )
 
 // Lifted off BatchDetail.vue's "Make Announcement" button, which renders only
@@ -90,7 +92,7 @@ const refusal = computed(() => {
 	if (readOnlyMode) return __('This site is in read-only mode.')
 	if (!isAdmin.value)
 		return __('You are not permitted to make an announcement for this batch.')
-	if (!batch.data?.students?.length)
+	if (!batch.data?.student_count)
 		return __('Add students to the batch to make an announcement')
 	return null
 })
@@ -129,8 +131,7 @@ const layout = [
 									component: RichTextEditorField,
 									props: {
 										fixedMenu: true,
-										editorClass:
-											'prose-sm py-2 px-2 min-h-[200px] border-outline-gray-2 hover:border-outline-gray-3 rounded-b-5 bg-surface-gray-3',
+										minHeight: '200px',
 									},
 								},
 							},
@@ -142,17 +143,15 @@ const layout = [
 	},
 ]
 
+// The students are BCC'd on the server; this form never holds their addresses.
 const announcementResource = createResource({
-	url: 'frappe.core.doctype.communication.email.make',
+	url: 'lms.lms.api.send_batch_announcement',
 	makeParams() {
 		return {
-			recipients: doc.value.replyTo,
-			bcc: (batch.data?.students || []).join(', '),
+			batch: props.batchName,
 			subject: doc.value.subject,
 			content: doc.value.announcement,
-			doctype: 'LMS Batch',
-			name: props.batchName,
-			send_email: 1,
+			reply_to: doc.value.replyTo,
 		}
 	},
 })
@@ -164,7 +163,7 @@ const makeAnnouncement = () => {
 		{},
 		{
 			validate() {
-				if (!batch.data?.students?.length) {
+				if (!batch.data?.student_count) {
 					return __('No students in this batch')
 				}
 				if (!doc.value.subject) {

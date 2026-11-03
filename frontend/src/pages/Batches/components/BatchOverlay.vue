@@ -70,35 +70,32 @@
 			</div>
 
 			<div v-if="!readOnlyMode && !canAccessBatch">
-				<router-link
-					:to="{
-						name: 'Billing',
-						params: {
-							type: 'batch',
-							name: batch.data.name,
-						},
-					}"
+				<Button
 					v-if="
 						batch.data.paid_batch &&
-						batch.data.seats_left > 0 &&
+						hasSeatsLeft &&
 						batch.data.accept_enrollments
 					"
+					class="w-full mt-4"
+					variant="solid"
+					:route="{
+						name: 'Billing',
+						params: { type: 'batch', name: batch.data.name },
+					}"
 				>
-					<Button class="w-full mt-4" variant="solid">
-						<template #prefix>
-							<span class="lucide-credit-card size-4" />
-						</template>
-						<span>
-							{{ __('Register Now') }}
-						</span>
-					</Button>
-				</router-link>
+					<template #prefix>
+						<span class="lucide-credit-card size-4" />
+					</template>
+					<span>
+						{{ __('Register Now') }}
+					</span>
+				</Button>
 				<Button
 					variant="solid"
 					class="w-full mt-2"
 					v-else-if="
 						batch.data.allow_self_enrollment &&
-						batch.data.seats_left &&
+						hasSeatsLeft &&
 						batch.data.accept_enrollments
 					"
 					@click="enrollInBatch()"
@@ -108,13 +105,28 @@
 					</template>
 					{{ __('Enroll Now') }}
 				</Button>
+				<Badge
+					v-else-if="!batch.data.accept_enrollments"
+					theme="blue"
+					size="lg"
+					class="mt-4"
+					:label="__('Enrollment for this batch is closed')"
+				/>
+				<Alert
+					v-else-if="hasSeatsLeft"
+					class="mt-4"
+					:icon="false"
+					:description="
+						__('Contact the Administrator to enroll for this batch')
+					"
+				/>
 			</div>
 		</div>
 	</div>
 </template>
 <script setup>
 import { inject, computed } from 'vue'
-import { Badge, Button, createResource, toast } from 'frappe-ui'
+import { Alert, Badge, Button, createResource, toast } from 'frappe-ui'
 import {
 	formatNumberIntoCurrency,
 	formatTime,
@@ -144,7 +156,7 @@ const enroll = createResource({
 
 const enrollInBatch = () => {
 	if (!user.data) {
-		window.location.href = `/login?redirect-to=/batches/${props.batch.data.name}`
+		window.location.href = `/login?redirect-to=${window.location.pathname}`
 		return
 	}
 	enroll.submit(
@@ -165,10 +177,12 @@ const enrollInBatch = () => {
 	)
 }
 
+const hasSeatsLeft = computed(() => {
+	return !props.batch.data?.seat_count || props.batch.data.seats_left > 0
+})
+
 const isStudent = computed(() => {
-	return user.data
-		? props.batch.data?.students?.includes(user.data?.name)
-		: false
+	return user.data ? Boolean(props.batch.data?.is_student) : false
 })
 
 const isModerator = computed(() => {
@@ -183,7 +197,14 @@ const canAccessBatch = computed(() => {
 	if (!user.data) {
 		return false
 	}
-	return isModerator.value || isStudent.value || isEvaluator.value
+	// can_manage is per-batch: a Course Creator only manages a batch they are
+	// tagged an instructor/evaluator on, unlike the global isModerator/isEvaluator.
+	return (
+		isModerator.value ||
+		isStudent.value ||
+		isEvaluator.value ||
+		Boolean(props.batch.data?.can_manage)
+	)
 })
 
 const isAdmin = computed(() => {

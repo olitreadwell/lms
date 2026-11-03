@@ -3,10 +3,18 @@
 		<!-- <audio width="100%" controls controlsList="nodownload" class="mb-4">
 			<source :src="encodeURI(file)" type="audio/mp3" />
 		</audio> -->
-		<audio @ended="handleAudioEnd" controlsList="nodownload" class="mb-4">
+		<audio
+			ref="audioEl"
+			@ended="handleAudioEnd"
+			controlsList="nodownload"
+			class="mb-4"
+		>
 			<source :src="safeUrl(encodeURI(file))" type="audio/mp3" />
 		</audio>
-		<div class="flex items-center gap-x-2 shadow rounded-6 p-1 w-1/2">
+		<div
+			data-testid="audio-player"
+			class="flex items-center gap-x-2 rounded-7 overflow-hidden p-1 w-1/2"
+		>
 			<Button
 				variant="ghost"
 				:label="isPlaying ? __('Pause') : __('Play')"
@@ -53,6 +61,7 @@ import { Button } from 'frappe-ui'
 import { safeUrl } from '@/utils/safeUrl'
 
 const isPlaying = ref(false)
+const audioEl = ref(null)
 const audio = ref(null)
 let isMuted = ref(false)
 let currentTime = ref(0)
@@ -66,18 +75,19 @@ const props = defineProps({
 })
 
 onMounted(() => {
-	setTimeout(() => {
-		audio.value = document.querySelector('audio')
+	audio.value = audioEl.value
+	if (audio.value) {
 		audio.value.onloadedmetadata = () => {
 			duration.value = audio.value.duration
 		}
 		audio.value.ontimeupdate = () => {
 			currentTime.value = audio.value.currentTime
 		}
-	}, 0)
+	}
 })
 
 const togglePlay = () => {
+	if (!audio.value) return
 	if (audio.value.paused) {
 		audio.value.play()
 		isPlaying.value = true
@@ -88,11 +98,13 @@ const togglePlay = () => {
 }
 
 const toggleMute = () => {
+	if (!audio.value) return
 	audio.value.muted = !audio.value.muted
 	isMuted.value = audio.value.muted
 }
 
 const changeCurrentTime = () => {
+	if (!audio.value) return
 	audio.value.currentTime = currentTime.value
 }
 
@@ -107,6 +119,7 @@ const formatTime = (time) => {
 }
 
 watch(isPlaying, (newVal) => {
+	if (!audio.value) return
 	if (newVal) {
 		audio.value.play()
 	} else {

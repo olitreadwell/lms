@@ -1,16 +1,71 @@
 import json
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import frappe
 from frappe.cache_manager import user_cache_keys
 from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, nowdate
+from frappe.utils.html_utils import sanitize_html
 
+from lms.lms.course_import_export import get_assessment_map
 from lms.lms.doctype.lms_certificate.lms_certificate import get_default_certificate_template
 from lms.lms.doctype.lms_quiz.lms_quiz import submit_quiz
+from lms.lms.lesson_assessments import ASSESSMENT_BLOCK_KEYS
 
 # frappe keys cached documents as f"document_cache::{doctype}::{name}"
 # (frappe/model/document.py, get_document_cache_key).
 DOCUMENT_CACHE_PREFIX = "document_cache::"
+
+# Inverted from the two maps the lesson reader itself uses, so a new assessment type is
+# placeable by these helpers as soon as the app can place it.
+ASSESSMENT_BLOCK_TYPES = {
+	doctype: (block_type, ASSESSMENT_BLOCK_KEYS[block_type])
+	for block_type, doctype in get_assessment_map().items()
+}
+
+
+def released_sanitize_html(html, *args, always_sanitize=False, **kwargs):
+	"""frappe v15/v16 return any JSON-parseable string untouched unless always_sanitize is set."""
+	if not always_sanitize and isinstance(html, str):
+		try:
+			json.loads(html)
+			return html
+		except ValueError:
+			pass
+	return sanitize_html(html, *args, always_sanitize=always_sanitize, **kwargs)
+
+
+@contextmanager
+def released_frappe_sanitizer():
+	with (
+		patch("frappe.model.base_document.sanitize_html", released_sanitize_html),
+		patch("lms.lms.html_sanitizer.sanitize_html", released_sanitize_html),
+	):
+		yield
+
+
+def delete_error_logs_on_cleanup(test):
+	"""Error Log sits outside the test transaction, so no rollback removes the rows a test logs."""
+	created = []
+	log_error = frappe.log_error
+
+	def record(*args, **kwargs):
+		error_log = log_error(*args, **kwargs)
+		if error_log and error_log.name:
+			created.append(error_log.name)
+		return error_log
+
+	def delete_created():
+		# frappe.db cannot reach Error Log once it is virtual; delete_doc goes through its controller.
+		for name in created:
+			# nosemgrep: lms-unjustified-ignore-permissions - removing a row this test just made
+			frappe.delete_doc("Error Log", name, force=True, ignore_permissions=True)
+
+	stub = patch.object(frappe, "log_error", record)
+	stub.start()
+	test.addCleanup(delete_created)
+	test.addCleanup(stub.stop)
 
 
 class BaseTestUtils(IntegrationTestCase):
@@ -27,6 +82,7 @@ class BaseTestUtils(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.db.savepoint("lms_test")
+		delete_error_logs_on_cleanup(self)
 
 	def tearDown(self):
 		frappe.db.rollback(save_point="lms_test")
@@ -37,6 +93,22 @@ class BaseTestUtils(IntegrationTestCase):
 		frappe.cache.delete_key(user_cache_keys)
 		frappe.set_user("Administrator")
 		super().tearDown()
+
+	@classmethod
+	def _require(cls, holds: bool, message: str):
+		"""A setUpClass precondition: raising there errors every test in the class."""
+		if not holds:
+			raise AssertionError(message)
+
+	@classmethod
+	def _require_no_moderators(cls, *users):
+		"""A fixed-key fixture returns the existing row untouched, so declared roles are
+		decoration until read. A Moderator's refusal would prove nothing."""
+		for user in users:
+			cls._require(
+				"Moderator" not in frappe.get_roles(user),
+				f"{user} holds Moderator, so a refusal for it proves nothing",
+			)
 
 	@classmethod
 	def _create_user(cls, email, first_name, last_name, roles, user_type="Website User"):
@@ -328,6 +400,42 @@ class BaseTestUtils(IntegrationTestCase):
 			)
 		quiz.save()
 		return quiz
+
+	@classmethod
+	def _set_authors(cls, doctype: str, name: str, users: list[str]):
+		"""Replace the stored `authors` rows outright, leaving `owner` untouched."""
+		doc = frappe.get_doc(doctype, name)
+		doc.set("authors", [{"author": user} for user in users])
+		# nosemgrep: lms-unjustified-ignore-permissions - fixture seeding, not the permission under test
+		doc.save(ignore_permissions=True)
+
+	@classmethod
+	def _stamp_legacy_quiz_placement(cls, quiz: str, course: str, lesson: str | None = None):
+		"""Write the frozen pre-placement-table LMS Quiz.course/.lesson stamp, deliberately.
+		Use _place_in_lesson for a placement the app itself would make."""
+		frappe.db.set_value("LMS Quiz", quiz, {"course": course, "lesson": lesson})
+
+	@classmethod
+	def _place_in_lesson(
+		cls,
+		course: str,
+		assessment_type: str,
+		assessment_name: str,
+		instructor_only: bool = False,
+		title: str | None = None,
+	):
+		"""Embed an assessment in a lesson of `course`, the way a real save places it.
+		A distinct default title per call: _create_lesson is a get-or-create keyed on
+		(course, title), so a shared one collapses every placement onto one lesson."""
+		block_type, data_key = ASSESSMENT_BLOCK_TYPES[assessment_type]
+		blob = frappe.as_json({"blocks": [{"type": block_type, "data": {data_key: assessment_name}}]})
+		chapter = cls._create_chapter(f"Placement Chapter for {course}", course)
+		title = title or f"Placement Lesson {frappe.generate_hash(length=8)}"
+		lesson = cls._create_lesson(title, chapter.name, course, None if instructor_only else blob)
+		if instructor_only:
+			lesson.instructor_content = blob
+			lesson.save()
+		return lesson
 
 	@classmethod
 	def _create_assignment(cls, title="Utility Assignment"):

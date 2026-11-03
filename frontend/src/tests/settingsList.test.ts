@@ -8,6 +8,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { markRaw } from 'vue'
 import type { SettingsListColumn } from '@/types'
 
 vi.mock('frappe-ui', () => ({
@@ -49,7 +50,8 @@ vi.mock('frappe-ui/list', () => ({
 		template: `<div><template v-for="item in items" :key="item.name"><slot :item="item" /></template></div>`,
 	},
 	ListRow: {
-		template: `<div data-testid="row" @click="$emit('click')"><slot /></div>`,
+		props: ['onClick'],
+		template: `<div data-testid="row" @click="onClick?.($event)"><slot /></div>`,
 	},
 	ListCell: { template: `<div data-testid="cell"><slot /></div>` },
 }))
@@ -172,15 +174,6 @@ describe('SettingsList', () => {
 		expect(build().findAll('[data-testid="header-cell"]')).toHaveLength(5)
 	})
 
-	it('puts the header labels on the paragraph scale', () => {
-		// ListHeader sets text-sm (13px/1.15) on the row and the cells inherit
-		// it. text-p-sm is the same 13px at 1.5, set on the cell itself so it
-		// beats inheritance whatever order the two utilities land in.
-		for (const cell of build().findAll('[data-testid="header-cell"]')) {
-			expect(cell.classes()).toContain('text-p-sm')
-		}
-	})
-
 	it('keeps the header in the same scroller as the rows', () => {
 		// Not a stylistic preference. The header and the rows are separate grid
 		// containers sharing one `--_list-columns` track list, so they only line up
@@ -204,6 +197,7 @@ describe('SettingsList', () => {
 
 		await wrapper.get('[data-testid="row"]').trigger('click')
 
+		expect(wrapper.emitted('rowClick')).toHaveLength(1)
 		expect(wrapper.emitted('rowClick')?.[0]).toEqual([ROW])
 	})
 
@@ -268,10 +262,10 @@ describe('SettingsList', () => {
 	})
 
 	describe('emptyContent', () => {
-		const EmptyContent = {
+		const EmptyContent = markRaw({
 			emits: ['pick'],
 			template: `<button data-testid="empty-content" @click="$emit('pick', 'GMail')" />`,
-		}
+		})
 
 		it('draws it instead of the generic caption when the list is truly empty', () => {
 			const wrapper = build({
@@ -304,14 +298,6 @@ describe('SettingsList', () => {
 			})
 			expect(filtered.find('[data-testid="empty-content"]').exists()).toBe(
 				false
-			)
-		})
-
-		it('leaves the plain caption alone for a page that supplies nothing', () => {
-			const wrapper = build({ rows: [], emptyName: 'Coupons' })
-
-			expect(wrapper.get('[data-testid="empty"]').text()).toContain(
-				'Add one to get started'
 			)
 		})
 

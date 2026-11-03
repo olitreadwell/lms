@@ -68,22 +68,25 @@
 			</template>
 		</ResponsiveListView>
 		<div v-else class="flex-1">
-			<EmptyStateLayout :name="emptyName" :icon="emptyIcon" />
+			<EmptyStateLayout
+				:name="emptyName"
+				:icon="emptyIcon"
+				:description="emptyStateDescription"
+			>
+				<Button
+					v-if="isFiltered"
+					:label="__('Clear filters')"
+					@click="clearFilters"
+				/>
+			</EmptyStateLayout>
 		</div>
 
 		<template #footer>
 			<ListFooter
 				v-model="pageLength"
 				class="flex-wrap border-t px-5 py-2"
-				:options="{
-					rowCount: rows.length,
-					totalCount: resolvedCount,
-					pageLengthOptions,
-				}"
+				:options="{ pageLengthOptions }"
 			>
-				<template #left>
-					<TabButtons v-model="pageLength" :options="pageLengthTabs" />
-				</template>
 				<template #right>
 					<div class="flex items-center">
 						<Button
@@ -92,7 +95,7 @@
 							@click="emit('loadMore')"
 						/>
 						<div v-if="showLoadMore" class="mx-3 h-[80%] border-s" />
-						<div class="flex items-center gap-1 text-base text-ink-gray-5">
+						<div class="flex items-center gap-1 text-base text-ink-gray-6">
 							<div>{{ rows.length }}</div>
 							<template v-if="resolvedCount !== null">
 								<div>{{ __('of') }}</div>
@@ -108,13 +111,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import {
-	Button,
-	createResource,
-	FormControl,
-	TabButtons,
-	toast,
-} from 'frappe-ui'
+import { Button, createResource, FormControl, toast } from 'frappe-ui'
+import type { FrappeResourceError } from 'frappe-ui'
 import { ListFooter } from 'frappe-ui/experimental'
 import EmptyStateLayout from '@/components/Layouts/EmptyStateLayout.vue'
 import PageHeader from '@/components/Layouts/pages/PageHeader.vue'
@@ -171,6 +169,12 @@ const props = withDefaults(
 		/** What the empty state calls these rows, e.g. "Courses". */
 		emptyName?: string
 		emptyIcon?: string
+		/** Replaces the default empty-state sentence, which suits learner pages. */
+		emptyDescription?: string
+		/** Text in a search box the page renders itself, in its #filters slot. */
+		searchQuery?: string
+		/** A filter other than search is narrowing the rows. */
+		filtered?: boolean
 	}>(),
 	{
 		title: '',
@@ -187,10 +191,13 @@ const props = withDefaults(
 		pageLengthOptions: () => [24, 60, 120],
 		emptyName: '',
 		emptyIcon: 'lucide-graduation-cap',
+		emptyDescription: '',
+		searchQuery: '',
+		filtered: false,
 	}
 )
 
-const emit = defineEmits<{ loadMore: [] }>()
+const emit = defineEmits<{ loadMore: []; clearFilters: [] }>()
 
 // On a phone the bulk-action banner docks against the same bottom edge the
 // footer holds, so the footer yields that edge while a selection lasts
@@ -201,17 +208,35 @@ const selecting = computed(() => Boolean(listView.value?.selections.size))
 
 const pageLength = defineModel<number>('pageLength', { default: 24 })
 
-// ListFooter's own `#left` fallback renders v0 TabButtons (`:buttons`), which
-// v1 TabButtons no longer accepts, so it silently renders nothing. This
-// overrides it with the same tabs, built the v1 way.
-const pageLengthTabs = computed(() =>
-	props.pageLengthOptions.map((option) => ({ label: option, value: option }))
-)
-
 // Bound, this renders the search box at the head of the filter strip. Left
 // unbound it is `undefined` and there is no box, so pages with nothing to
 // search are unchanged.
 const search = defineModel<string>('search')
+
+// With a search or filter on, an empty list means nothing matched, not that
+// there is nothing to show (Helpdesk's SkeletonLoader `hasAppliedFilter`).
+const activeQuery = computed(() => (search.value || props.searchQuery).trim())
+
+const isFiltered = computed(() => props.filtered || Boolean(activeQuery.value))
+
+const emptyStateDescription = computed(() => {
+	if (activeQuery.value) {
+		return __(
+			'Nothing matches "{0}". Try another search or clear the filters.'
+		).format(activeQuery.value)
+	}
+	if (props.filtered) {
+		return __(
+			'Nothing matches the filters applied. Try changing or clearing them.'
+		)
+	}
+	return props.emptyDescription
+})
+
+const clearFilters = () => {
+	if (search.value) search.value = ''
+	emit('clearFilters')
+}
 
 watch(pageLength, (value: number) => {
 	// reload() ignores a new pageLength while start > 0: it refetches the
@@ -234,8 +259,8 @@ const countResource = props.listResource
 			// Without this the heading just reads zero, which is indistinguishable
 			// from an empty list. Each page used to carry its own; the count moved
 			// here, so the report of its failure has to move here too.
-			onError(error: { messages?: string[] }) {
-				toast.error(error?.messages?.[0] || __('Could not count the list'))
+			onError(error: FrappeResourceError) {
+				toast.error(error.messages?.[0] || __('Could not count the list'))
 			},
 	  })
 	: null
