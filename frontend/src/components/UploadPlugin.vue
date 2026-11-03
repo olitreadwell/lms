@@ -67,10 +67,17 @@ const addFile = (file) => {
 	})
 }
 
+// Frappe's nginx config caps request bodies at 25 MB, so reject larger
+// files here with a clear message instead of a bare 413 from the server.
+const MAX_FILE_SIZE = 25 * 1024 * 1024
+
 const validateFile = (file) => {
 	let extension = file.name.split('.').pop().toLowerCase()
 	if (!['jpg', 'jpeg', 'png', 'mp4', 'mov', 'mp3', 'pdf'].includes(extension)) {
 		return __('Only image and video files are allowed.')
+	}
+	if (file.size > MAX_FILE_SIZE) {
+		return 'File is too large. Maximum size is 25 MB.'
 	}
 }
 
