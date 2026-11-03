@@ -10,6 +10,7 @@ import { usersStore } from '@/stores/user'
 import router from '@/router'
 import { pushSettingsHash } from '@/composables/useSettingsHash'
 import { Heading } from '@/utils/heading'
+import { UnknownBlock } from '@/utils/unknownBlock'
 import Paragraph from '@editorjs/paragraph'
 import { CodeBox } from '@/utils/code'
 import NestedList from '@editorjs/nested-list'
@@ -23,11 +24,12 @@ import {
 	clipboardTuneNames,
 } from '@/utils/blockTunes/clipboardTunes'
 import dayjs from '@/utils/dayjs'
-import Embed from '@editorjs/embed'
+import { SafeEmbed } from '@/utils/safeEmbed'
 import SimpleImage from '@editorjs/simple-image'
 import Table from '@editorjs/table'
 import DOMPurify from 'dompurify'
 import { decodeEntities } from './inertHtml'
+import { escapeHTML } from '@/utils/format'
 
 const readOnlyMode = window.read_only_mode
 
@@ -134,6 +136,10 @@ const INLINE_TOOLBAR_ORDER = [
 	'strikeThrough',
 ]
 
+// The embed tool parses these html strings, so a translated title is escaped
+// before it goes inside an attribute.
+const frameTitle = (label) => `title="${escapeHTML(label)}"`
+
 export function getEditorTools(
 	isInstructorEditor = false,
 	uploadContext = {},
@@ -185,6 +191,9 @@ export function getEditorTools(
 			inlineToolbar: INLINE_TOOLBAR_ORDER,
 		},
 		image: SimpleImage,
+		stub: {
+			class: UnknownBlock,
+		},
 		paragraph: {
 			class: Paragraph,
 			inlineToolbar: INLINE_TOOLBAR_ORDER,
@@ -216,7 +225,7 @@ export function getEditorTools(
 		cutBlock: clipboardTunes.cutBlock,
 		pasteBlock: clipboardTunes.pasteBlock,
 		embed: {
-			class: Embed,
+			class: SafeEmbed,
 			inlineToolbar: false,
 			config: {
 				services: {
@@ -238,7 +247,9 @@ export function getEditorTools(
 						regex: /^https:\/\/customer-[a-z0-9]+\.cloudflarestream\.com\/([a-f0-9]{32})\/watch$/,
 						embedUrl:
 							'https://iframe.videodelivery.net/<%= remote_id %>',
-						html: `<iframe style="width:100%; height: ${
+						html: `<iframe ${frameTitle(
+							__('Cloudflare Stream embed')
+						)} style="width:100%; height: ${
 							window.innerWidth < 640 ? '15rem' : '30rem'
 						};" frameborder="0" allowfullscreen></iframe>`,
 					},
@@ -246,7 +257,9 @@ export function getEditorTools(
 						regex: /^https:\/\/(?:iframe\.mediadelivery\.net|video\.bunnycdn\.com|player\.mediadelivery\.net)\/play\/([a-zA-Z0-9]+\/[a-zA-Z0-9-]+)$/,
 						embedUrl:
 							'https://player.mediadelivery.net/embed/<%= remote_id %>',
-						html: `<iframe style="width:100%; height: ${
+						html: `<iframe ${frameTitle(
+							__('Bunny Stream embed')
+						)} style="width:100%; height: ${
 							window.innerWidth < 640 ? '15rem' : '30rem'
 						};" frameborder="0" allowfullscreen></iframe>`,
 					},
@@ -255,7 +268,9 @@ export function getEditorTools(
 						regex: /^(?:http[s]?:\/\/)?(?:www.)?aparat\.com\/v\/([^\/\?\&]+)\/?$/,
 						embedUrl:
 							'https://www.aparat.com/video/video/embed/videohash/<%= remote_id %>/vt/frame',
-						html: `<iframe style="margin: 0 auto; width: 100%; height: ${
+						html: `<iframe ${frameTitle(
+							__('Aparat embed')
+						)} style="margin: 0 auto; width: 100%; height: ${
 							window.innerWidth < 640 ? '15rem' : '30rem'
 						};" frameborder="0" scrolling="no" allowtransparency="true"></iframe>`,
 					},
@@ -264,7 +279,9 @@ export function getEditorTools(
 						regex: /^https:\/\/docs\.google\.com\/presentation\/d\/([A-Za-z0-9_-]+)\/pub$/,
 						embedUrl:
 							'https://docs.google.com/presentation/d/<%= remote_id %>/embed',
-						html: `<iframe style='width: 100%; height: ${
+						html: `<iframe ${frameTitle(
+							__('Google Slides embed')
+						)} style='width: 100%; height: ${
 							window.innerWidth < 640 ? '15rem' : '30rem'
 						}; border: 1px solid var(--outline-gray-2); border-radius: 12px; margin: 1rem 0' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
@@ -272,7 +289,9 @@ export function getEditorTools(
 						regex: /^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)\/view(\?.+)?$/,
 						embedUrl:
 							'https://drive.google.com/file/d/<%= remote_id %>/preview',
-						html: `<iframe style='width: 100%; height: ${
+						html: `<iframe ${frameTitle(
+							__('Google Drive embed')
+						)} style='width: 100%; height: ${
 							window.innerWidth < 640 ? '15rem' : '30rem'
 						}; border: 1px solid var(--outline-gray-2); border-radius: 12px;' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
@@ -280,25 +299,33 @@ export function getEditorTools(
 						regex: /^https:\/\/docs\.google\.com\/document\/d\/([A-Za-z0-9_-]+)\/edit(\?.+)?$/,
 						embedUrl:
 							'https://docs.google.com/document/d/<%= remote_id %>/preview',
-						html: "<iframe style='width: 100%; height: 40rem; border: 1px solid var(--outline-gray-2); border-radius: 12px;' frameborder='0' allowfullscreen='true'></iframe>",
+						html: `<iframe ${frameTitle(
+							__('Google Docs embed')
+						)} style='width: 100%; height: 40rem; border: 1px solid var(--outline-gray-2); border-radius: 12px;' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
 					sheetsPublic: {
 						regex: /^https:\/\/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)\/edit(\?.+)?$/,
 						embedUrl:
 							'https://docs.google.com/spreadsheets/d/<%= remote_id %>/preview',
-						html: "<iframe style='width: 100%; height: 40rem; border: 1px solid var(--outline-gray-2); border-radius: 12px;' frameborder='0' allowfullscreen='true'></iframe>",
+						html: `<iframe ${frameTitle(
+							__('Google Sheets embed')
+						)} style='width: 100%; height: 40rem; border: 1px solid var(--outline-gray-2); border-radius: 12px;' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
 					slidesPublic: {
 						regex: /^https:\/\/docs\.google\.com\/presentation\/d\/([A-Za-z0-9_-]+)\/edit(\?.+)?$/,
 						embedUrl:
 							'https://docs.google.com/presentation/d/<%= remote_id %>/embed',
-						html: "<iframe style='width: 100%; height: 30rem; border: 1px solid var(--outline-gray-2); border-radius: 12px; margin: 1rem 0;' frameborder='0' allowfullscreen='true'></iframe>",
+						html: `<iframe ${frameTitle(
+							__('Google Slides embed')
+						)} style='width: 100%; height: 30rem; border: 1px solid var(--outline-gray-2); border-radius: 12px; margin: 1rem 0;' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
 					codesandbox: {
 						regex: /^https:\/\/codesandbox\.io\/(?:(?:p\/(?:sandbox|devbox)\/)|(?:embed\/)|(?:s\/))?([A-Za-z0-9_-]+)(?:[\/\?].*)?$/,
 						embedUrl:
 							'https://codesandbox.io/embed/<%= remote_id %>?view=editor+%2B+preview&module=%2Findex.html',
-						html: "<iframe style='width: 100%; height: 500px; border: 0; border-radius: 4px; overflow: hidden;' sandbox='allow-modals allow-forms allow-popups allow-scripts allow-same-origin' frameborder='0' allowfullscreen='true'></iframe>",
+						html: `<iframe ${frameTitle(
+							__('CodeSandbox embed')
+						)} style='width: 100%; height: 500px; border: 0; border-radius: 4px; overflow: hidden;' sandbox='allow-modals allow-forms allow-popups allow-scripts allow-same-origin' frameborder='0' allowfullscreen='true'></iframe>`,
 					},
 				},
 			},
@@ -859,7 +886,7 @@ export const createLMSCategory = (name) => {
 // Takes the tab's slug, not its label, since renaming a label must not break
 // callers. Returns whether Settings actually opened, so a caller that closes
 // itself separately can stay put when it did not.
-export const openSettings = (slug, close = null) => {
+export const openSettings = (slug, close = null, field = null) => {
 	const settingsStore = useSettings()
 	if (!settingsStore.isSettingsMounted) {
 		toast.error(__('Settings is only available on a larger screen.'))
@@ -868,6 +895,7 @@ export const openSettings = (slug, close = null) => {
 	if (close) {
 		close()
 	}
+	settingsStore.focusField = field
 	pushSettingsHash(router, slug)
 	return true
 }

@@ -11,14 +11,18 @@ from frappe import _
 from frappe.desk.doctype.notification_log.notification_log import make_notification_logs
 from frappe.model.document import Document
 from frappe.query_builder import Bracket
-from frappe.utils import add_days, cint, format_datetime, get_time, nowdate
+from frappe.utils import add_days, cint, format_datetime, get_time, getdate, nowdate
 from pypika.terms import LiteralValue
 
 from lms.lms.permissions import (
+	CONFERENCING_ACCOUNT_FIELDS,
 	administrable_assessment_names,
 	authored_batch_condition,
 	can_author_batch,
+	can_instruct_batch,
+	can_use_conferencing_account,
 	courses_authored_by,
+	evaluator_role_reads_batch,
 	is_site_administrator,
 )
 from lms.lms.utils import (
@@ -43,6 +47,8 @@ class LMSBatch(Document):
 		self.validate_batch_end_date()
 		self.validate_batch_time()
 		self.validate_duplicate_courses()
+		self.validate_duplicate_instructors()
+		self.validate_instructor_changes()
 		self.validate_payments_app()
 		self.validate_amount_and_currency()
 		self.validate_duplicate_assessments()
@@ -120,7 +126,7 @@ class LMSBatch(Document):
 			)
 
 	def validate_batch_end_date(self):
-		if self.end_date < self.start_date:
+		if getdate(self.end_date) < getdate(self.start_date):
 			frappe.throw(_("Batch end date cannot be before the batch start date"))
 
 	def validate_batch_time(self):
@@ -134,6 +140,15 @@ class LMSBatch(Document):
 		if len(duplicates):
 			title = frappe.db.get_value("LMS Course", next(iter(duplicates)), "title")
 			frappe.throw(_("Course {0} has already been added to this batch.").format(frappe.bold(title)))
+
+	def validate_duplicate_instructors(self):
+		instructors = [row.instructor for row in self.instructors]
+		duplicates = {instructor for instructor in instructors if instructors.count(instructor) > 1}
+		if len(duplicates):
+			full_name = frappe.db.get_value("User", next(iter(duplicates)), "full_name")
+			frappe.throw(
+				_("Instructor {0} has already been added to this batch.").format(frappe.bold(full_name))
+			)
 
 	def validate_payments_app(self):
 		if self.paid_batch:
@@ -160,7 +175,7 @@ class LMSBatch(Document):
 				)
 
 	def validate_evaluation_end_date(self):
-		if self.evaluation_end_date and self.evaluation_end_date < self.end_date:
+		if self.evaluation_end_date and getdate(self.evaluation_end_date) < getdate(self.end_date):
 			frappe.throw(_("Evaluation end date cannot be less than the batch end date."))
 
 	def validate_seats_left(self):
@@ -197,10 +212,15 @@ class LMSBatch(Document):
 						_("Row #{0} End time cannot be outside the batch duration.").format(schedule.idx)
 					)
 
-			if schedule.date < self.start_date or schedule.date > self.end_date:
+			if not schedule.date:
+				frappe.throw(_("Row #{0} Date is required.").format(schedule.idx))
+
+			date = getdate(schedule.date)
+			if date < getdate(self.start_date) or date > getdate(self.end_date):
 				frappe.throw(_("Row #{0} Date cannot be outside the batch duration.").format(schedule.idx))
 
 	def validate_conferencing_provider(self):
+		self.validate_conferencing_accounts()
 		if self.is_new() or not self.conferencing_provider:
 			return
 
@@ -218,12 +238,42 @@ class LMSBatch(Document):
 
 			if not google_meet_settings.google_calendar:
 				frappe.throw(
-					_("The selected Google Meet account does not have a Google Calendar configured.")
+					_("Add a Google Calendar to the selected Google Meet account to use it for live classes.")
 				)
 
 		elif self.conferencing_provider == "Zoom":
 			if not self.zoom_account:
 				frappe.throw(_("Please select a Zoom account for this batch."))
+
+	def validate_conferencing_accounts(self):
+		"""An account newly set on the batch must be one the user may use. Not through the
+		batch's stored account: that is the one being replaced."""
+		for doctype, field in CONFERENCING_ACCOUNT_FIELDS.items():
+			account = self.get(field)
+			if (
+				account
+				and self.has_value_changed(field)
+				and not can_use_conferencing_account(doctype, account)
+			):
+				frappe.throw(
+					_(
+						"You can't set this account on the batch. Choose your own account, or ask its owner or a Moderator to set it."
+					),
+					frappe.PermissionError,
+				)
+
+	def validate_instructor_changes(self):
+		"""An evaluator may edit the batch, but listing themselves as its instructor
+		would let them schedule its live classes."""
+		if self.is_new():
+			return
+		stored = frappe.get_all(
+			"Course Instructor", {"parent": self.name, "parenttype": "LMS Batch"}, pluck="instructor"
+		)
+		if set(stored) == {row.instructor for row in self.instructors}:
+			return
+		if not can_instruct_batch(self.name):
+			frappe.throw(_("Only the batch's instructors can change who teaches it."), frappe.PermissionError)
 
 	def on_payment_authorized(self, payment_status):
 		if payment_status in ["Authorized", "Completed"]:
@@ -301,7 +351,7 @@ def send_system_notification_for_published_batch(batch):
 	frappe.db.set_value("LMS Batch", batch.name, "notification_sent", 1)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_live_class(
 	batch_name: str,
 	zoom_account: str,
@@ -313,12 +363,21 @@ def create_live_class(
 	auto_recording: str,
 	description: str = None,
 ):
-	if not can_author_batch(batch_name) or not frappe.has_permission("LMS Live Class", "create"):
-		# Checked before any Zoom call, or an unauthorised request still burns a
-		# real meeting that the later save() only orphans.
-		frappe.throw(
-			_("You do not have permission to create a live class for this batch."), frappe.PermissionError
-		)
+	# Checked before any Zoom call, or an unauthorised request still burns a
+	# real meeting that the later save() only orphans.
+	check_can_schedule_live_class(batch_name)
+	if not zoom_account:
+		frappe.throw(_("Please select a Zoom account for this batch."))
+
+	from lms.lms.doctype.lms_live_class.lms_live_class import (
+		check_class_can_use_account,
+		get_live_class_calendar,
+	)
+
+	check_class_can_use_account("LMS Zoom Settings", zoom_account, batch_name)
+	# Also before the Zoom call: the class cannot be saved without a calendar, and
+	# a meeting made first would be left on the Zoom account with no class for it.
+	get_live_class_calendar("Zoom")
 
 	payload = {
 		"topic": title,
@@ -360,13 +419,37 @@ def create_live_class(
 			}
 		)
 		class_details = frappe.get_doc(payload)
-		class_details.save()
+		class_details.flags.conferencing_account_checked = True
+		try:
+			class_details.save()
+		except Exception:
+			# The meeting already exists on Zoom; without its class nothing points at it.
+			delete_zoom_meeting(data.get("id"), headers)
+			raise
 		return class_details
 	else:
 		frappe.throw(_("Error creating live class. Please try again. {0}").format(response.text))
 
 
-@frappe.whitelist()
+def delete_zoom_meeting(meeting_id, headers):
+	"""Best effort: the save's own error is the one to report, not this one. Logged
+	deferred, because that error rolls back the request and an Error Log written in
+	it would go with it."""
+	try:
+		response = requests.delete(
+			f"https://api.zoom.us/v2/meetings/{meeting_id}", headers=headers, timeout=10
+		)
+		if response.ok:
+			return
+		detail = f"Zoom answered {response.status_code}: {response.text}"
+	except Exception:
+		detail = frappe.get_traceback()
+	frappe.log_error(
+		title=f"Could not delete orphaned Zoom meeting {meeting_id}", message=detail, defer_insert=True
+	)
+
+
+@frappe.whitelist(methods=["POST"])
 def create_google_meet_live_class(
 	batch_name: str,
 	google_meet_account: str,
@@ -377,21 +460,23 @@ def create_google_meet_live_class(
 	timezone: str,
 	description: str = None,
 ):
-	if not can_author_batch(batch_name) or not frappe.has_permission("LMS Live Class", "create"):
-		frappe.throw(
-			_("You do not have permission to create a live class for this batch."), frappe.PermissionError
-		)
+	check_can_schedule_live_class(batch_name)
+	if not google_meet_account:
+		frappe.throw(_("Please select a Google Meet account for this batch."))
 
+	from lms.lms.doctype.lms_live_class.lms_live_class import (
+		check_class_can_use_account,
+		get_live_class_calendar,
+	)
+
+	check_class_can_use_account("LMS Google Meet Settings", google_meet_account, batch_name)
 	google_meet_settings = frappe.get_doc("LMS Google Meet Settings", google_meet_account)
 	if not google_meet_settings.enabled:
 		frappe.throw(_("Please enable the Google Meet account to use this feature."))
 
-	if not google_meet_settings.google_calendar:
-		frappe.throw(
-			_(
-				"The Google Meet account does not have a Google Calendar configured. Please set up a Google Calendar first."
-			)
-		)
+	# The same check as the Zoom path: a calendar that is set, authorised, and
+	# pushes to Google, before anything is made.
+	get_live_class_calendar("Google Meet", google_meet_account)
 
 	class_details = frappe.get_doc(
 		{
@@ -408,8 +493,18 @@ def create_google_meet_live_class(
 			"google_meet_account": google_meet_account,
 		}
 	)
+	class_details.flags.conferencing_account_checked = True
 	class_details.save()
 	return class_details
+
+
+def check_can_schedule_live_class(batch_name):
+	if not can_instruct_batch(batch_name):
+		frappe.throw(_("Only the batch's instructors can schedule live classes."), frappe.PermissionError)
+	if not frappe.has_permission("LMS Live Class", "create"):
+		frappe.throw(
+			_("You do not have permission to create a live class for this batch."), frappe.PermissionError
+		)
 
 
 def authenticate(zoom_account):
@@ -440,11 +535,9 @@ def get_batch_timetable(batch: str):
 	is_batch_student = frappe.db.exists(
 		"LMS Batch Enrollment", {"batch": batch, "member": frappe.session.user}
 	)
-	is_admin = "Moderator" in roles or "Batch Evaluator" in roles
-	if not (is_batch_student or is_admin):
-		frappe.throw(
-			_("You do not have permission to access announcements for this batch."), frappe.PermissionError
-		)
+	is_admin = "Moderator" in roles or evaluator_role_reads_batch(batch)
+	if not (is_batch_student or is_admin or can_author_batch(batch)):
+		frappe.throw(_("You do not have permission to see this batch's timetable."), frappe.PermissionError)
 
 	timetable = frappe.get_all(
 		"LMS Batch Timetable",
@@ -586,9 +679,7 @@ def has_permission(doc, ptype="read", user=None):
 		# A new batch has no tags yet; creation stays governed by the DocPerm grant.
 		return doc.is_new() or can_author_batch(doc.name, user=user)
 
-	# Batch Evaluator keeps its existing blanket read; any other tagged
-	# instructor/evaluator (e.g. Course Creator) is scoped to their own batch.
-	if "Batch Evaluator" in roles or can_author_batch(doc.name, user=user):
+	if can_author_batch(doc.name, user=user):
 		return True
 
 	is_enrolled = frappe.db.exists("LMS Batch Enrollment", {"batch": doc.name, "member": user})
@@ -612,7 +703,7 @@ def get_permission_query_conditions(user=None):
 		return "1 = 0"
 
 	roles = frappe.get_roles(user)
-	if "Moderator" in roles or "Batch Evaluator" in roles:
+	if "Moderator" in roles:
 		return ""
 
 	batch = frappe.qb.DocType("LMS Batch")

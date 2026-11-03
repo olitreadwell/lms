@@ -11,6 +11,7 @@ core (frappe/permissions.py), CRM (crm.permissions.*), and Raven (raven.permissi
 
 import frappe
 from frappe import _
+from frappe.permissions import get_role_permissions
 from frappe.query_builder import Bracket
 from pypika import Case
 from pypika import functions as fn
@@ -40,6 +41,7 @@ COURSE_RECORD_MEMBER_FIELDS = {
 	"LMS Course Progress": "member",
 	"LMS Video Watch Duration": "member",
 	"LMS Course Review": "owner",
+	"LMS Enrollment": "member",
 }
 
 
@@ -171,24 +173,70 @@ def chapter_query_conditions(user=None) -> str:
 def can_author_batch(batch: str | None, *, user: str | None = None) -> bool:
 	"""A site administrator, a Moderator, or a user the stored batch tags as an
 	instructor or as the evaluator of one of its courses."""
+	return can_instruct_batch(batch, user=user) or evaluates_batch(batch, user=user)
+
+
+def can_instruct_batch(batch: str | None, *, user: str | None = None) -> bool:
+	"""A site administrator, a Moderator, or a user the stored batch lists as an
+	instructor. Unlike can_author_batch, a Batch Course evaluator tag is not enough."""
 	user = user or frappe.session.user
 	if is_site_administrator(user) or has_moderator_role(user):
 		return True
+	return _batch_tags(batch, "Course Instructor", "instructor", user)
+
+
+def evaluates_batch(batch: str | None, *, user: str | None = None) -> bool:
+	"""A user the stored batch tags as the evaluator of one of its courses."""
+	return _batch_tags(batch, "Batch Course", "evaluator", user or frappe.session.user)
+
+
+def evaluator_role_reads_batch(batch: str | None, *, user: str | None = None) -> bool:
+	"""The Batch Evaluator role alone reaches a published batch's staff views; an
+	unpublished one needs a tag (:func:`can_author_batch`)."""
+	user = user or frappe.session.user
+	if "Batch Evaluator" not in frappe.get_roles(user):
+		return False
+	return bool(frappe.db.get_value("LMS Batch", batch, "published"))
+
+
+def _batch_tags(batch: str | None, child_doctype: str, field: str, user: str) -> bool:
 	# A deleted batch leaves its Course Instructor / Batch Course rows behind.
 	if not isinstance(batch, str) or not batch or not frappe.db.exists("LMS Batch", batch):
 		return False
-
-	tagged = {"parent": batch, "parenttype": "LMS Batch"}
-	return bool(
-		frappe.db.exists("Course Instructor", {**tagged, "instructor": user})
-		or frappe.db.exists("Batch Course", {**tagged, "evaluator": user})
-	)
+	return bool(frappe.db.exists(child_doctype, {"parent": batch, "parenttype": "LMS Batch", field: user}))
 
 
 def authored_batch_condition(field, user: str):
 	"""qb condition: `field` names a batch `user` is a tagged instructor or evaluator of.
 	Two IN subqueries rather than a UNION, which MariaDB rejects inside IN."""
 	return field.isin(_taught("LMS Batch", user)) | field.isin(_evaluator_batches(user))
+
+
+# The LMS Batch / LMS Live Class field that names each kind of conferencing account.
+CONFERENCING_ACCOUNT_FIELDS = {
+	"LMS Zoom Settings": "zoom_account",
+	"LMS Google Meet Settings": "google_meet_account",
+}
+
+
+def can_use_conferencing_account(
+	doctype: str, account: str | None, batch: str | None = None, *, user: str | None = None
+) -> bool:
+	"""An account the user can read, their own, or the one stored on a batch they
+	are an instructor of. False for a missing account too, so callers can refuse
+	both with one message and not reveal which accounts exist."""
+	user = user or frappe.session.user
+	if not isinstance(account, str) or not account or not frappe.db.exists(doctype, account):
+		return False
+	if frappe.has_permission(doctype, "read", account, user=user):
+		return True
+	if frappe.db.get_value(doctype, account, "member") == user:
+		return True
+	if not isinstance(batch, str) or not batch:
+		return False
+
+	field = CONFERENCING_ACCOUNT_FIELDS[doctype]
+	return frappe.db.get_value("LMS Batch", batch, field) == account and can_instruct_batch(batch, user=user)
 
 
 def course_record_has_permission(doc, ptype="read", user=None) -> bool:
@@ -263,6 +311,54 @@ def course_record_query_conditions(user=None, doctype=None) -> str:
 	)
 	condition = Bracket((getattr(record, member_field) == member) | record.course.isin(taught))
 	return _render(condition)
+
+
+def enrollment_has_permission(doc, ptype="read", user=None) -> bool:
+	"""An enrolment belongs to its learner, to the authors of its course, and to
+	the tagged instructors of the batch it came from: adding a learner to a batch
+	enrols them in its courses as whoever added them."""
+	user = user or frappe.session.user
+	# A saved row is judged by its stored batch: enrollment_from_batch cannot change
+	# after insert (validate_identity_unchanged).
+	batch = (
+		doc.get("enrollment_from_batch")
+		if doc.is_new()
+		else frappe.db.get_value(doc.doctype, doc.name, "enrollment_from_batch")
+	)
+	if batch and doc.get("enrollment_from_batch") == batch and can_author_batch(batch, user=user):
+		return True
+	return course_record_has_permission(doc, ptype, user)
+
+
+def enrollment_query_conditions(user=None, doctype=None) -> str:
+	"""List-read counterpart of :func:`enrollment_has_permission`, as SQL."""
+	user = user or frappe.session.user
+	course_scope = course_record_query_conditions(user, "LMS Enrollment")
+	if not course_scope:
+		return ""
+	enrollment = frappe.qb.DocType("LMS Enrollment")
+	batch_scope = _render(Bracket(authored_batch_condition(enrollment.enrollment_from_batch, user)))
+	return f"({course_scope} or {batch_scope})"
+
+
+def lesson_note_has_permission(doc, ptype="read", user=None) -> bool:
+	"""A lesson note is private to the learner who wrote it. Moderators and site
+	administrators keep access; the instructors of the course do not."""
+	user = user or frappe.session.user
+	if _course_read_condition(user) is None:
+		return True
+	# Judged by the STORED member too, or relabelling it would hand a note over.
+	stored = None if doc.is_new() else frappe.db.get_value(doc.doctype, doc.name, "member")
+	return doc.get("member") == user and (doc.is_new() or stored == user)
+
+
+def lesson_note_query_conditions(user=None, doctype=None) -> str:
+	"""List-read counterpart of :func:`lesson_note_has_permission`, as SQL."""
+	user = user or frappe.session.user
+	if _course_read_condition(user) is None:
+		return ""
+	note = frappe.qb.DocType("LMS Lesson Note")
+	return _render(note.member == LiteralValue(frappe.db.escape(user)))
 
 
 def _unrestricted_coupon_access(user: str) -> bool:
@@ -776,15 +872,38 @@ def can_access_assessment(doctype: str, name: str, *, user: str | None = None) -
 
 
 def can_administer_assessment(doctype: str, name: str, *, user: str | None = None) -> bool:
-	"""``can_access_assessment`` with both enrolled-member branches removed.
-	Submissions compose on this one: every enrolled member is a member, so the wider
-	reading would hand a student every other student's work."""
+	"""``can_access_assessment`` without the enrolled-member branches: who may use it
+	as staff, such as attaching it to a batch. Never decides a write
+	(:func:`can_author_assessment`) or a submission read (:func:`can_review_submission`)."""
 	return _assessment_answer(doctype, name, user, include_members=False)
 
 
+def can_author_assessment(doctype: str, name: str, *, user: str | None = None) -> bool:
+	"""Who may change an assessment: its `authors`, a Moderator or a site admin.
+	Placing it in a lesson or a batch never counts."""
+	user = user or frappe.session.user
+	return _is_unrestricted(user) or is_content_author(doctype, name, user)
+
+
+def unplaceable_assessments(placements: set, user: str | None = None) -> set:
+	"""The (doctype, name) pairs in `placements` that `user` may not place in a
+	lesson: those they cannot already administer. One query per doctype."""
+	user = user or frappe.session.user
+	if _is_unrestricted(user):
+		return set()
+	by_doctype: dict[str, set] = {}
+	for doctype, name in placements:
+		by_doctype.setdefault(doctype, set()).add(name)
+	refused = set()
+	for doctype, names in by_doctype.items():
+		usable = set(frappe.db.sql_list(administrable_assessment_names(doctype, user)))
+		refused |= {(doctype, name) for name in names - usable}
+	return refused
+
+
 # The ptypes that read an assessment rather than author it, matching Course Lesson's
-# own hook. Everything else — write, delete, share, export, report, email — takes the
-# instructor reading, so an enrolled member reaches the content and nothing more.
+# own hook. Everything else -- write, delete, share, export, report, email -- is the
+# authors' alone, so a course or batch that places it reaches the content and nothing more.
 ASSESSMENT_READ_PTYPES = ("read", "select", "print")
 
 
@@ -801,7 +920,7 @@ def assessment_has_permission(doc, ptype="read", user=None):
 	DocPerm grant governs. `ptype == "create"` alone is not that signal: inserting
 	a child row (a question, a test case, an `authors` entry) onto an *existing*
 	assessment reaches this same hook with ptype="create" and the existing parent
-	attached, and must be checked as administering that parent, not waved through.
+	attached, and must be checked as authoring that parent, not waved through.
 	"""
 	if doc.doctype not in ASSESSMENT_DOCTYPES:
 		return True
@@ -811,7 +930,7 @@ def assessment_has_permission(doc, ptype="read", user=None):
 	user = user or frappe.session.user
 	if ptype in ASSESSMENT_READ_PTYPES:
 		return can_access_assessment(doc.doctype, doc.name, user=user)
-	return can_administer_assessment(doc.doctype, doc.name, user=user)
+	return can_author_assessment(doc.doctype, doc.name, user=user)
 
 
 def _assessment_answer(doctype: str, name: str, user: str | None, *, include_members: bool) -> bool:
@@ -849,6 +968,9 @@ def _reaches_through_a_course(doctype: str, name: str, user: str, *, include_mem
 		return True
 	if not include_members:
 		return False
+	batch_course = frappe.qb.DocType("Batch Course")
+	if placements and _evaluated_courses(user).where(batch_course.course.isin(set(placements))).run():
+		return True
 
 	enrolled = _enrolled_in(set(placements), user)
 	return any(
@@ -868,6 +990,22 @@ def _enrolled_in(courses: set, user: str) -> set:
 			"LMS Enrollment",
 			filters={"member": user, "course": ("in", list(courses))},
 			pluck="course",
+		)
+	)
+
+
+def _evaluated_courses(user: str):
+	"""Courses `user` is the Batch Course evaluator of in an existing batch, as a subquery."""
+	batch_course = frappe.qb.DocType("Batch Course")
+	batch = frappe.qb.DocType("LMS Batch")
+	return (
+		frappe.qb.from_(batch_course)
+		.join(batch)
+		.on(batch.name == batch_course.parent)
+		.select(batch_course.course)
+		.where(
+			(batch_course.evaluator == LiteralValue(frappe.db.escape(user)))
+			& (batch_course.parenttype == "LMS Batch")
 		)
 	)
 
@@ -1018,24 +1156,17 @@ def _assessment_query_conditions(doctype: str, user: str | None = None) -> str:
 
 
 def administrable_assessment_names(doctype: str, user: str | None = None) -> str:
-	"""``can_administer_assessment`` as SQL: a bare ``select`` for a submission's
-	query condition to nest in an ``in (...)``. No enrolled-member branch, same as
+	"""``can_administer_assessment`` as SQL: a bare ``select`` of the assessments
+	`user` may attach to a batch. No enrolled-member branch, same as
 	:func:`can_administer_assessment`."""
 	if doctype not in ASSESSMENT_DOCTYPES:
 		return NO_ASSESSMENT_NAMES
-	return _administrable_assessment_query(doctype, user).get_sql()
-
-
-def _administrable_assessment_query(doctype: str, user: str | None = None):
-	"""qb form of :func:`administrable_assessment_names`, kept as a query object
-	so a caller can nest it with ``isin`` instead of re-parsing rendered SQL."""
 	assessment = frappe.qb.DocType(doctype)
 	user = user or frappe.session.user
 	query = frappe.qb.from_(assessment).select(assessment.name)
 	if not _is_unrestricted(user):
-		condition = _assessment_reach_condition(doctype, assessment, user, include_members=False)
-		query = query.where(condition)
-	return query
+		query = query.where(_assessment_reach_condition(doctype, assessment, user, include_members=False))
+	return query.get_sql()
 
 
 def _is_unrestricted(user: str) -> bool:
@@ -1064,31 +1195,182 @@ def programming_exercise_submission_query_conditions(user: str | None = None) ->
 
 
 def _assessment_submission_query_conditions(doctype: str, user: str | None = None) -> str:
-	"""Own submissions, plus every submission of an assessment the caller administers.
-	Nests _administrable_assessment_query's builder object directly, so the whole
-	condition renders once, at the end."""
+	"""SQL mirror of :func:`assessment_submission_has_permission`: own submissions,
+	every submission of an assessment the caller authors, and the submissions of
+	students enrolled in a course or batch the caller teaches that places it."""
 	assessment_doctype, field = SUBMISSION_ASSESSMENT_FIELDS[doctype]
 	user = user or frappe.session.user
 	if _is_unrestricted(user):
 		return ""
 	submission = frappe.qb.DocType(doctype)
-	member = LiteralValue(frappe.db.escape(user))
-	administrable = _administrable_assessment_query(assessment_doctype, user)
-	condition = Bracket((submission.member == member) | getattr(submission, field).isin(administrable))
-	return _render(condition)
+	assessment = frappe.qb.DocType(assessment_doctype)
+	authored = (
+		frappe.qb.from_(assessment)
+		.select(assessment.name)
+		.where(_authored_condition(assessment_doctype, assessment, user))
+	)
+	condition = (submission.member == LiteralValue(frappe.db.escape(user))) | getattr(submission, field).isin(
+		authored
+	)
+	for reviewable in _reviewable_submissions(doctype, assessment_doctype, field, user):
+		condition = condition | submission.name.isin(reviewable)
+	return _render(Bracket(condition))
+
+
+def _reviewable_submissions(doctype: str, assessment_doctype: str, field: str, user: str) -> list:
+	"""One subquery of submission names per way a placement reaches the submitting
+	member: through a course `user` teaches, or a batch `user` instructs or evaluates."""
+	queries = [_through_a_lesson_placement(doctype, assessment_doctype, field, user)]
+	if assessment_doctype == "LMS Quiz":
+		queries.append(_through_a_quiz_id_placement(doctype, user))
+	if assessment_doctype in LEGACY_STAMP_DOCTYPES:
+		queries.append(_through_a_legacy_stamp(doctype, assessment_doctype, field, user))
+	queries.append(_through_a_batch(doctype, assessment_doctype, field, user))
+	evaluated = _evaluated_batch_course_submissions
+	queries.append(
+		_through_a_lesson_placement(
+			doctype, assessment_doctype, field, user, staff=evaluated, student_visible_only=True
+		)
+	)
+	if assessment_doctype == "LMS Quiz":
+		queries.append(_through_a_quiz_id_placement(doctype, user, staff=evaluated))
+	return queries
+
+
+def _taught_course_submissions(doctype: str, user: str):
+	"""The submissions whose member is enrolled in a course `user` teaches, with the
+	enrolment joined in for the placement joins to match against. Aliased, since
+	it nests inside a query on the same table."""
+	reviewed = frappe.qb.DocType(doctype).as_("reviewed")
+	enrollment = frappe.qb.DocType("LMS Enrollment")
+	query = (
+		frappe.qb.from_(reviewed)
+		.join(enrollment)
+		.on(enrollment.member == reviewed.member)
+		.select(reviewed.name)
+		.where(enrollment.course.isin(_taught("LMS Course", user)))
+	)
+	return query, reviewed, enrollment.course
+
+
+def _evaluated_batch_course_submissions(doctype: str, user: str):
+	"""The submissions whose member is enrolled in a batch where `user` is the
+	Batch Course evaluator, with that row's course for the placement joins."""
+	reviewed = frappe.qb.DocType(doctype).as_("reviewed")
+	enrollment = frappe.qb.DocType("LMS Batch Enrollment")
+	batch_course = frappe.qb.DocType("Batch Course")
+	batch = frappe.qb.DocType("LMS Batch")
+	query = (
+		frappe.qb.from_(reviewed)
+		.join(enrollment)
+		.on(enrollment.member == reviewed.member)
+		.join(batch_course)
+		.on(
+			(batch_course.parent == enrollment.batch)
+			& (batch_course.parenttype == "LMS Batch")
+			& (batch_course.evaluator == LiteralValue(frappe.db.escape(user)))
+		)
+		.join(batch)
+		.on(batch.name == batch_course.parent)
+		.select(reviewed.name)
+	)
+	return query, reviewed, batch_course.course
+
+
+def _through_a_lesson_placement(
+	doctype: str,
+	assessment_doctype: str,
+	field: str,
+	user: str,
+	*,
+	staff=_taught_course_submissions,
+	student_visible_only: bool = False,
+):
+	query, reviewed, course = staff(doctype, user)
+	la = frappe.qb.DocType("LMS Lesson Assessment")
+	cl = frappe.qb.DocType("Course Lesson")
+	cc = frappe.qb.DocType("Course Chapter")
+	query = (
+		query.join(la)
+		.on(
+			(la.assessment_name == getattr(reviewed, field))
+			& (la.assessment_type == LiteralValue(frappe.db.escape(assessment_doctype)))
+			& (la.parenttype == "Course Lesson")
+		)
+		.join(cl)
+		.on(cl.name == la.parent)
+		.join(cc)
+		.on((cc.name == cl.chapter) & (cc.course == course))
+	)
+	return query.where(la.instructor_only == 0) if student_visible_only else query
+
+
+def _through_a_quiz_id_placement(doctype: str, user: str, *, staff=_taught_course_submissions):
+	query, reviewed, course = staff(doctype, user)
+	cl = frappe.qb.DocType("Course Lesson")
+	cc = frappe.qb.DocType("Course Chapter")
+	return (
+		query.join(cl)
+		.on(cl.quiz_id == reviewed.quiz)
+		.join(cc)
+		.on((cc.name == cl.chapter) & (cc.course == course))
+	)
+
+
+def _through_a_legacy_stamp(doctype: str, assessment_doctype: str, field: str, user: str):
+	"""Mirrors :func:`_add_legacy_stamp_course`: the stamped lesson's course wins
+	whenever it resolves, the stamped course is the fallback."""
+	query, reviewed, course = _taught_course_submissions(doctype, user)
+	assessment = frappe.qb.DocType(assessment_doctype)
+	query = query.join(assessment).on(assessment.name == getattr(reviewed, field))
+	if assessment_doctype != "LMS Quiz":
+		return query.where(assessment.course == course)
+	cl = frappe.qb.DocType("Course Lesson")
+	cc = frappe.qb.DocType("Course Chapter")
+	return (
+		query.left_join(cl)
+		.on(cl.name == assessment.lesson)
+		.left_join(cc)
+		.on(cc.name == cl.chapter)
+		.where(fn.Coalesce(cc.course, assessment.course) == course)
+	)
+
+
+def _through_a_batch(doctype: str, assessment_doctype: str, field: str, user: str):
+	reviewed = frappe.qb.DocType(doctype).as_("reviewed")
+	enrollment = frappe.qb.DocType("LMS Batch Enrollment")
+	la = frappe.qb.DocType("LMS Assessment")
+	batch = frappe.qb.DocType("LMS Batch")
+	return (
+		frappe.qb.from_(reviewed)
+		.join(enrollment)
+		.on(enrollment.member == reviewed.member)
+		.join(la)
+		.on(
+			(la.parent == enrollment.batch)
+			& (la.assessment_type == LiteralValue(frappe.db.escape(assessment_doctype)))
+			& (la.assessment_name == getattr(reviewed, field))
+		)
+		.join(batch)
+		.on(batch.name == la.parent)
+		.select(reviewed.name)
+		.where(
+			enrollment.batch.isin(_taught("LMS Batch", user))
+			| enrollment.batch.isin(_evaluator_batches(user))
+		)
+	)
 
 
 def assessment_submission_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
-	"""Doc half of the submission pair: a submission belongs to its own member and to
-	whoever administers the assessment it answers.
+	"""Doc half of the submission pair: a submission belongs to its own member, to
+	the assessment's authors, and to staff of a course or batch that places the
+	assessment and that the member is enrolled in.
 
 	Matches course_record_has_permission's stored-vs-submitted handling: `member`
 	must match in both the stored row and the value being saved, since reading only
 	the in-memory one would let a save claim someone else's row by naming them.
-	Administering requires both the stored assessment and the submitted one (when
-	the save repoints it), since reading only the submitted one would let a caller
-	borrow rights over an assessment they administer to reach a row that answers one
-	they do not.
+	A reviewer must reach every stored and submitted (assessment, member) pair, so
+	repointing either field cannot borrow rights over a row they do not reach.
 	"""
 	if doc is None or doc.get("__islocal") or not doc.get("name"):
 		return True
@@ -1104,13 +1386,121 @@ def assessment_submission_has_permission(doc, ptype: str | None = None, user: st
 		return False
 	if stored.member == user and doc.get("member") == user:
 		return True
-	name = stored.get(field)
-	moved_to = doc.get(field) if doc.get(field) != name else None
-	if name and all(
-		can_administer_assessment(assessment_doctype, n, user=user) for n in (name, moved_to) if n
-	):
+	if not stored.get(field):
+		return False
+	assessments = {stored.get(field), doc.get(field) or stored.get(field)}
+	members = {stored.member, doc.get("member") or stored.member}
+	return all(
+		can_review_submission(assessment_doctype, name, member, user=user)
+		for name in assessments
+		for member in members
+	)
+
+
+def can_view_member_activity(member: str | None, *, user: str | None = None) -> bool:
+	"""Whether `user` may read `member`'s learning activity: the member themselves,
+	a site administrator or Moderator, or staff of a course or batch the member is
+	enrolled in. The same reach the list API gives them over the member's records."""
+	if not member:
+		return False
+	user = user or frappe.session.user
+	if user == member or _is_unrestricted(user):
 		return True
-	return False
+	return _member_in_a_taught_course(member, user) or _member_in_a_staffed_batch(member, user)
+
+
+def _member_in_a_taught_course(member: str, user: str) -> bool:
+	"""One query: the courses `user` teaches stay a subquery."""
+	enrollment = frappe.qb.DocType("LMS Enrollment")
+	return bool(
+		frappe.qb.from_(enrollment)
+		.select(enrollment.name)
+		.where(
+			(enrollment.member == LiteralValue(frappe.db.escape(member)))
+			& enrollment.course.isin(_taught("LMS Course", user))
+		)
+		.limit(1)
+		.run()
+	)
+
+
+def _member_in_a_staffed_batch(member: str, user: str, batches: list | None = None) -> bool:
+	"""Whether `member` is enrolled in a batch `user` instructs or evaluates a course
+	of, among `batches` when given. One query: the staffed batches are subqueries."""
+	if batches is not None and not batches:
+		return False
+	enrollment = frappe.qb.DocType("LMS Batch Enrollment")
+	staffed = enrollment.batch.isin(_taught("LMS Batch", user)) | enrollment.batch.isin(_evaluated(user))
+	query = (
+		frappe.qb.from_(enrollment)
+		.select(enrollment.name)
+		.where((enrollment.member == LiteralValue(frappe.db.escape(member))) & staffed)
+	)
+	if batches is not None:
+		query = query.where(enrollment.batch.isin(batches))
+	return bool(query.limit(1).run())
+
+
+def _evaluated(user: str):
+	"""Names of the batches `user` evaluates a course of."""
+	batch_course = frappe.qb.DocType("Batch Course")
+	return (
+		frappe.qb.from_(batch_course)
+		.select(batch_course.parent)
+		.where(
+			(batch_course.evaluator == LiteralValue(frappe.db.escape(user)))
+			& (batch_course.parenttype == "LMS Batch")
+		)
+	)
+
+
+def can_review_submission(doctype: str, name: str, member: str, *, user: str | None = None) -> bool:
+	"""Whether `user` may read and grade `member`'s work on this assessment: its
+	authors, or staff of a course or batch that places it and that `member` is
+	enrolled in."""
+	if doctype not in ASSESSMENT_DOCTYPES or not name or not member:
+		return False
+	user = user or frappe.session.user
+	if _is_unrestricted(user) or is_content_author(doctype, name, user):
+		return True
+	return (
+		_course_staff_reach(doctype, name, member, user)
+		or _batch_staff_reach(doctype, name, member, user)
+		or _batch_course_evaluator_reach(doctype, name, member, user)
+	)
+
+
+def _course_staff_reach(doctype: str, name: str, member: str, user: str) -> bool:
+	courses = set(_course_placements(doctype, name)) | _author_only_courses(doctype, name)
+	if not courses:
+		return False
+	instructor = frappe.qb.DocType("Course Instructor")
+	taught = set(_taught("LMS Course", user).where(instructor.parent.isin(courses)).run(pluck=True))
+	return bool(_enrolled_in(taught, member))
+
+
+def _batch_staff_reach(doctype: str, name: str, member: str, user: str) -> bool:
+	return _member_in_a_staffed_batch(member, user, _running_batches(doctype, name))
+
+
+def _batch_course_evaluator_reach(doctype: str, name: str, member: str, user: str) -> bool:
+	"""`user` evaluates, on some batch `member` is enrolled in, a course whose
+	student-visible lesson places this assessment."""
+	courses = set(_course_placements(doctype, name))
+	if not courses:
+		return False
+	batch_course = frappe.qb.DocType("Batch Course")
+	enrollment = frappe.qb.DocType("LMS Batch Enrollment")
+	return bool(
+		_evaluated_courses(user)
+		.join(enrollment)
+		.on(enrollment.batch == batch_course.parent)
+		.where(
+			batch_course.course.isin(courses) & (enrollment.member == LiteralValue(frappe.db.escape(member)))
+		)
+		.limit(1)
+		.run()
+	)
 
 
 def _assessment_reach_condition(doctype: str, assessment, user: str, *, include_members: bool) -> Bracket:
@@ -1171,6 +1561,11 @@ def _course_conditions(doctype: str, assessment, user: str, *, include_members: 
 		)
 		if doctype == "LMS Quiz":
 			conditions.append(_placed_by_quiz_id(assessment, _enrolled_courses(user)))
+		conditions.append(
+			_placed_in_a_lesson(doctype, assessment, _evaluated_courses(user), student_visible_only=True)
+		)
+		if doctype == "LMS Quiz":
+			conditions.append(_placed_by_quiz_id(assessment, _evaluated_courses(user)))
 	return conditions
 
 
@@ -1285,4 +1680,25 @@ def _evaluator_batches(user: str):
 			(batch_course.evaluator == LiteralValue(frappe.db.escape(user)))
 			& (batch_course.parenttype == "LMS Batch")
 		)
+	)
+
+
+def validate_filed_for_self(doc, fieldname: str):
+	"""Default `fieldname` to the session user. Naming another user needs role-level
+	write on the doctype, which an owner-scoped DocPerm does not give."""
+	if not doc.get(fieldname):
+		doc.set(fieldname, frappe.session.user)
+
+	if doc.get(fieldname) == frappe.session.user:
+		return
+
+	if get_role_permissions(doc.doctype).get("write"):
+		return
+
+	frappe.throw(
+		_("You can only submit a {0} for yourself, not for {1}.").format(
+			_(doc.doctype), frappe.bold(doc.get(fieldname))
+		),
+		frappe.PermissionError,
+		title=_("Cannot submit for another user"),
 	)

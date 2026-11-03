@@ -79,9 +79,9 @@ const emittedTypes = (wrapper: any, name: string): string[] =>
 
 // ─── Mount helper ─────────────────────────────────────────────────────────────
 
-const mountMonitor = (props: Partial<{ active: boolean; violationCount: number }> = {}) =>
+const mountMonitor = (props: Partial<{ active: boolean }> = {}) =>
 	mount(ProctoringMonitor, {
-		props: { maxViolations: 3, active: false, violationCount: 0, ...props },
+		props: { active: false, ...props },
 		global: { mocks: { __: (s: string) => s } },
 		attachTo: document.body,
 	})
@@ -95,13 +95,13 @@ describe('ProctoringMonitor — setup phase', () => {
 		expect(wrapper.text()).toContain('Loading camera')
 		// Drawn by frappe-ui's Spinner, which announces itself; the hand-rolled
 		// lucide-loader-2 it replaced was an unlabelled decorative span.
-		expect(wrapper.get('[role="status"]').classes()).toContain('fui-spinner')
+		expect(wrapper.find('[role="status"].fui-spinner').exists()).toBe(true)
 	})
 
 	it('drops the spinner once the camera is past loading', async () => {
 		const wrapper = mountMonitor()
 		await flushPromises()
-		expect(wrapper.find('[role="status"]').exists()).toBe(false)
+		expect(wrapper.find('.fui-spinner').exists()).toBe(false)
 	})
 
 	it('shows an error message and emits camera-denied when access is refused', async () => {
@@ -111,38 +111,9 @@ describe('ProctoringMonitor — setup phase', () => {
 		expect(wrapper.text()).toContain('Camera access was denied')
 		expect(wrapper.emitted('camera-denied')).toBeTruthy()
 	})
-
-	it('shows "Position your face" label after camera loads', async () => {
-		const wrapper = mountMonitor()
-		await flushPromises()
-		// Models loaded, interval started — setupStatus transitions to 'detecting'
-		expect(wrapper.text()).toContain('Position your face')
-	})
-
 })
 
 describe('ProctoringMonitor — monitoring phase', () => {
-	it('shows the violation count pill', async () => {
-		const wrapper = mountMonitor({ active: true, violationCount: 2 })
-		await flushPromises()
-		expect(wrapper.text()).toContain('2 / 3')
-		expect(wrapper.text()).toContain('violations')
-	})
-
-	it('pill is red when violation count is greater than zero', async () => {
-		const wrapper = mountMonitor({ active: true, violationCount: 1 })
-		await flushPromises()
-		const pill = wrapper.find('.rounded-full')
-		expect(pill.classes().join(' ')).toContain('bg-surface-red-1')
-	})
-
-	it('pill is green when there are no violations', async () => {
-		const wrapper = mountMonitor({ active: true, violationCount: 0 })
-		await flushPromises()
-		const pill = wrapper.find('.rounded-full')
-		expect(pill.classes().join(' ')).toContain('bg-surface-green-1')
-	})
-
 	it('emits violation("tab_switch") when the document becomes hidden', async () => {
 		const wrapper = mountMonitor({ active: true })
 		await flushPromises()
@@ -282,5 +253,51 @@ describe('ProctoringMonitor — floating camera', () => {
 		expect(document.body.textContent).not.toContain('Show camera')
 
 		wrapper.unmount()
+	})
+})
+
+describe('ProctoringMonitor — assistive tech', () => {
+	// Guards: lost focus on minimise, and face status and camera errors not
+	// announced. Introduced in #2659; test added with the a11y audit remediation.
+	beforeEach(() => {
+		document.body.innerHTML = ''
+	})
+
+	it('makes the minimised camera inert and moves focus to Show camera and back', async () => {
+		const wrapper = mountMonitor({ active: true })
+		await flushPromises()
+		const minimise = document.querySelector<HTMLElement>(
+			'[aria-label="Minimise camera"]'
+		)!
+		const panel = minimise.closest('.overflow-hidden')!
+
+		minimise.click()
+		await flushPromises()
+		expect(panel.hasAttribute('inert')).toBe(true)
+		const show = document.activeElement as HTMLElement
+		expect(show.getAttribute('aria-label')).toBe('Show camera')
+
+		show.click()
+		await flushPromises()
+		expect(panel.hasAttribute('inert')).toBe(false)
+		expect(document.activeElement).toBe(minimise)
+		wrapper.unmount()
+	})
+
+	it('keeps the face status region mounted and announces a camera error', async () => {
+		const wrapper = mountMonitor()
+		const region = wrapper.get('[role="status"]:not(.fui-spinner)').element
+		await flushPromises()
+		expect(wrapper.get('[role="status"]:not(.fui-spinner)').element).toBe(
+			region
+		)
+		expect(region.textContent).toContain('Position your face')
+
+		getUserMediaMock.mockRejectedValue(new Error('NotAllowedError'))
+		const denied = mountMonitor()
+		await flushPromises()
+		expect(denied.get('[role="alert"]').text()).toContain(
+			'Camera access was denied'
+		)
 	})
 })

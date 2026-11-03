@@ -29,7 +29,7 @@
 					:class="{ 'border-b': index + 1 != replies.data.length }"
 				>
 					<div class="flex items-center justify-between mb-2">
-						<div class="flex items-center text-ink-gray-5">
+						<div class="flex items-center text-ink-gray-6">
 							<UserAvatar :user="reply.user" class="me-2" />
 							<span>
 								{{ reply.user.full_name }}
@@ -77,6 +77,7 @@
 						</div>
 					</div>
 					<RichTextEditor
+						:ariaLabel="__('Reply by {0}').format(reply.user.full_name)"
 						:content="reply.reply"
 						@change="(val) => (reply.reply = val)"
 						:editable="reply.editable || false"
@@ -94,6 +95,7 @@
 
 		<RichTextEditor
 			v-if="renderEditor && !readOnlyMode"
+			:ariaLabel="__('Your reply')"
 			:content="newReply"
 			:mentions="mentionUsers"
 			@change="(val) => (newReply = val)"
@@ -139,6 +141,14 @@ const props = defineProps({
 		type: Boolean,
 		default: false,
 	},
+	doctype: {
+		type: String,
+		required: true,
+	},
+	docname: {
+		type: String,
+		required: true,
+	},
 })
 
 onMounted(() => {
@@ -171,12 +181,13 @@ const fetchMentionUsers = () => {
 	renderEditor.value = true
 	if (user.data?.is_student) return
 	allUsers.reload(
-		{},
+		{ doctype: props.doctype, docname: props.docname },
 		{
 			onSuccess(data) {
+				// The username is the stored id; the list and the mention show the name.
 				mentionUsers.value = Object.values(data).map((user) => {
 					return {
-						value: user.name,
+						value: user.username,
 						label: user.full_name,
 					}
 				})

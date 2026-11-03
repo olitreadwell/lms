@@ -39,7 +39,7 @@
 				v-if="!playing"
 				:aria-label="__('Play video')"
 				class="absolute inset-0 flex items-center justify-center cursor-pointer"
-				@click="playVideo"
+				@click="playFromOverlay"
 			>
 				<div class="video-play-scrim rounded-full p-4 ps-4.5">
 					<Play :class="scrimInk" />
@@ -48,10 +48,12 @@
 			<div
 				class="flex items-center gap-x-2 py-2 px-1 bg-gradient-to-b from-transparent to-black-overlay-700 absolute bottom-0 start-0 end-0 mx-auto rounded-5"
 				:class="{
-					'invisible group-hover:visible [@media(hover:none)]:visible': playing,
+					'invisible group-hover:visible group-focus-within:visible [@media(hover:none)]:visible':
+						playing,
 				}"
 			>
 				<Button
+					ref="playPauseButton"
 					variant="ghost"
 					class="hover:bg-transparent"
 					:label="playing ? __('Pause') : __('Play')"
@@ -161,11 +163,11 @@
 import { ref, onMounted, computed, watch, onBeforeUnmount } from 'vue'
 import { Button, Dialog, Dropdown } from 'frappe-ui'
 import { formatSeconds, formatTimestamp } from '@/utils/format'
-import { useSettings } from '@/stores/settings'
 import Play from '@/components/Icons/Play.vue'
 import Quiz from '@/components/Quiz.vue'
 import QuizInVideo from '@/components/Modals/QuizInVideo.vue'
 import { safeUrl } from '@/utils/safeUrl'
+import { clampSkipTarget, guardVideoElementSkips } from '@/utils/videoSkipGuard'
 
 // token-exempt: on the video scrim, which stays dark in either theme
 const scrimInk = 'text-white'
@@ -178,6 +180,7 @@ const scrimInk = 'text-white'
    of the video statistics modal. */
 const videoRef = ref(null)
 const videoContainer = ref(null)
+const playPauseButton = ref(null)
 let playing = ref(false)
 let currentTime = ref(0)
 let duration = ref(0)
@@ -188,7 +191,6 @@ const showQuizLoader = ref(false)
 const quizLoadTimer = ref(0)
 const currentQuiz = ref(null)
 const nextQuiz = ref({})
-const { settings } = useSettings()
 
 // Speed control states
 const playbackSpeed = ref(1)
@@ -228,6 +230,7 @@ onMounted(() => {
 	updateNextQuiz()
 	if (videoRef.value) {
 		videoRef.value.playbackRate = 1
+		if (props.readOnly) guardVideoElementSkips(videoRef.value)
 	}
 })
 
@@ -305,6 +308,14 @@ const playVideo = () => {
 	playing.value = true
 }
 
+// The overlay unmounts on play and would drop keyboard focus, so focus moves to
+// Pause while the bar is still visible; focus-within then keeps the bar shown.
+// A click with detail 0 came from Enter or Space.
+const playFromOverlay = (event) => {
+	if (event.detail === 0) playPauseButton.value?.$el?.focus()
+	playVideo()
+}
+
 const pauseVideo = () => {
 	videoRef.value.pause()
 	playing.value = false
@@ -328,11 +339,7 @@ const toggleMute = () => {
 }
 
 const changeCurrentTime = () => {
-	if (
-		settings.data?.prevent_skipping_videos &&
-		currentTime.value > videoRef.value.currentTime
-	)
-		return
+	currentTime.value = clampSkipTarget(videoRef.value, currentTime.value)
 	videoRef.value.currentTime = currentTime.value
 	updateNextQuiz()
 }

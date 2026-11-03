@@ -62,8 +62,13 @@
 							type="button"
 							:aria-label="__('Remove file')"
 							@click="() => (chapter.scorm_package = null)"
-							class="lucide-x bg-surface-gray-3 rounded-5 cursor-pointer w-5 h-5 p-1 ms-4 shrink-0"
-						/>
+							class="-m-0.5 ms-3.5 size-6 shrink-0 cursor-pointer p-0.5"
+						>
+							<span
+								class="lucide-x bg-surface-gray-3 rounded-5 w-5 h-5 p-1"
+								aria-hidden="true"
+							/>
+						</button>
 					</div>
 				</div>
 			</div>
@@ -72,7 +77,7 @@
 			<div v-if="canManageChapters" class="flex items-center justify-end">
 				<HeaderButton
 					data-testid="chapter-save"
-					:label="__('Save')"
+					:label="isEdit ? __('Save') : __('Add')"
 					variant="solid"
 					:loading="chapterResource.loading"
 					:disabled="isEdit && !chapterDetail"
@@ -99,6 +104,8 @@ import { getFileSize } from '@/utils/'
 import { resourceErrorMessage, submitResource } from '@/utils/resource'
 import { useOnboarding } from '@framework/ui/components/Onboarding/index'
 import { useTelemetry } from '@framework/ui/telemetry/index'
+import { takeFormSource } from '@/composables/formTracking'
+import { seesOnboarding } from '@/utils/onboarding'
 import FormShell from '@/components/FormShell.vue'
 import HeaderButton from '@/components/HeaderButton.vue'
 import { useFormRoute } from '@/composables/useFormRoute'
@@ -135,7 +142,6 @@ const props = defineProps<{
 
 const route = useRoute()
 const user = inject<SessionUser>('$user')!
-const { capture } = useTelemetry()
 const { updateOnboardingStep } = useOnboarding('learning')
 
 // House style for a route that serves both create and edit
@@ -205,6 +211,10 @@ const outline = createResource({
 
 // C3 — the old watch had no `immediate`, so a directly-mounted route rendered
 // an empty form. Nothing else fills this key, so edit mode always fetches.
+const { capture } = useTelemetry()
+// Read once, at mount: the opener sets it just before navigating here.
+const formSource = takeFormSource()
+
 onMounted(() => {
 	if (isEdit.value) outline.fetch()
 })
@@ -278,9 +288,12 @@ const saveChapter = () => {
 			validate: validateChapter,
 			onSuccess() {
 				if (!isEdit.value) {
-					if (user.data?.is_system_manager)
+					capture('chapter_created', {
+						course: props.courseName,
+						source: formSource,
+					})
+					if (seesOnboarding(user.data))
 						updateOnboardingStep('create_first_chapter')
-					capture('chapter_created')
 				}
 				// Stands in for the modal's `created`/`updated` emits: a route
 				// component has no parent listening, so refresh the outline the
