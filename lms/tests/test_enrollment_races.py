@@ -2,7 +2,9 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import frappe
+from frappe.tests import UnitTestCase
 
+from lms.lms.api import enroll_students_in_course
 from lms.lms.doctype.lms_batch_enrollment.lms_batch_enrollment import LMSBatchEnrollment
 from lms.lms.doctype.lms_enrollment.lms_enrollment import LMSEnrollment
 from lms.lms.enrollment_constraints import (
@@ -13,35 +15,9 @@ from lms.lms.test_helpers import BaseTestUtils
 from lms.lms.utils import enroll_in_course
 
 
-class TestEnrollmentRaces(BaseTestUtils):
-	"""Both controllers check for a duplicate with exists() and then insert().
-
-	Two concurrent requests both read "absent" and both insert, so the check
-	cannot settle it on its own. A FOR UPDATE lock on the parent row makes the
-	second request wait until the first has committed, which is what protects
-	every site — there is no migration, so an already-installed site gets no
-	unique index. The index that after_install adds on a fresh install is the
-	backstop for what bypasses the controller entirely.
-
-	Neutralising the check is how the index is exercised in one process: it is
-	exactly the state both requests are in after their read.
-	"""
-
-	def setUp(self):
-		super().setUp()
-		hash = frappe.generate_hash(length=6)
-		self.instructor = self._create_user(
-			f"race-instr-{hash}@example.com", "Race", "Instr", ["Course Creator", "Moderator"]
-		)
-		self._create_evaluator(self.instructor.email)
-		self.course = self._create_course(title=f"Race Course {hash}", instructor=self.instructor.email)
-		self.batch = self._create_batch(
-			course=self.course.name,
-			instructor=self.instructor.email,
-			title=f"Race Batch {hash}",
-			evaluator=self.instructor.email,
-		)
-		self.member = self._create_user(f"race-member-{hash}@example.com", "Race", "Tester", ["LMS Student"])
+class TestEnrollmentUniqueIndexes(UnitTestCase):
+	"""add_unique/sql_ddl commit, which would collapse BaseTestUtils' per-test
+	savepoint, so these three schema-only checks run outside it entirely."""
 
 	def test_the_unique_indexes_exist(self):
 		"""after_install is the only thing that adds these, so this passes on a
@@ -66,6 +42,38 @@ class TestEnrollmentRaces(BaseTestUtils):
 		"""unique_batch_member covers the same two columns in the same order as
 		the index add_batch_enrollment_index added for the Raven lookup."""
 		self.assertFalse(frappe.db.has_index("tabLMS Batch Enrollment", REDUNDANT_BATCH_INDEX))
+
+
+class TestEnrollmentRaces(BaseTestUtils):
+	"""Both controllers check for a duplicate with exists() and then insert().
+
+	Two concurrent requests both read "absent" and both insert, so the check
+	cannot settle it on its own. A FOR UPDATE lock on the parent row makes the
+	second request wait until the first has committed, which is what protects
+	every site — there is no migration, so an already-installed site gets no
+	unique index. The index that after_install adds on a fresh install is the
+	backstop for what bypasses the controller entirely.
+
+	Neutralising the check is how the index is exercised in one process: it is
+	exactly the state both requests are in after their read.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		hash = frappe.generate_hash(length=6)
+		cls.instructor = cls._create_user(
+			f"race-instr-{hash}@example.com", "Race", "Instr", ["Course Creator", "Moderator"]
+		)
+		cls._create_evaluator(cls.instructor.email)
+		cls.course = cls._create_course(title=f"Race Course {hash}", instructor=cls.instructor.email)
+		cls.batch = cls._create_batch(
+			course=cls.course.name,
+			instructor=cls.instructor.email,
+			title=f"Race Batch {hash}",
+			evaluator=cls.instructor.email,
+		)
+		cls.member = cls._create_user(f"race-member-{hash}@example.com", "Race", "Tester", ["LMS Student"])
 
 	def test_duplicate_batch_enrollment_is_refused_by_the_database(self):
 		with patch.object(LMSBatchEnrollment, "validate_duplicate_members"):
@@ -101,6 +109,16 @@ class TestEnrollmentRaces(BaseTestUtils):
 			self._insert_enrollment()
 		self._assert_locked_before_read(log, "LMS Course", "LMS Enrollment")
 
+	# Bulk certificate upgrades must keep the course-then-enrollment lock order from
+	# PR #2664 (45e305992), or they deadlock against a concurrent enrollment.
+	def test_the_certificate_upgrade_locks_the_course_before_the_enrollment(self):
+		self._insert_enrollment()
+		log = []
+		with self._logging_db(log):
+			enroll_students_in_course(self.course.name, [self.member.name], purchased_certificate=True)
+		self.assertIn(("lock", "LMS Enrollment"), log)
+		self.assertLess(log.index(("lock", "LMS Course")), log.index(("lock", "LMS Enrollment")))
+
 	def test_the_paid_course_callback_locks_before_its_own_check(self):
 		"""enroll_in_course pre-checks with exists() so a repeated payment callback
 		is a no-op. Unlocked, two callbacks arriving together both read "absent" and
@@ -118,7 +136,6 @@ class TestEnrollmentRaces(BaseTestUtils):
 			"LMS Enrollment", {"course": self.course.name, "member": frappe.session.user}
 		)
 		self.assertIsNotNone(created)
-		self.cleanup_items.append(("LMS Enrollment", created))
 		self._assert_locked_before_read(log, "LMS Course", "LMS Enrollment")
 
 	def test_batch_enrollment_locks_each_course_before_auto_enrolling(self):
@@ -175,7 +192,6 @@ class TestEnrollmentRaces(BaseTestUtils):
 		)
 		# nosemgrep: lms-unjustified-ignore-permissions - the race, not the role check, is under test
 		doc.insert(ignore_permissions=True)
-		self.cleanup_items.append(("LMS Batch Enrollment", doc.name))
 		return doc
 
 	def _insert_enrollment(self):
@@ -188,5 +204,4 @@ class TestEnrollmentRaces(BaseTestUtils):
 		)
 		# nosemgrep: lms-unjustified-ignore-permissions - the race, not the role check, is under test
 		doc.insert(ignore_permissions=True)
-		self.cleanup_items.append(("LMS Enrollment", doc.name))
 		return doc

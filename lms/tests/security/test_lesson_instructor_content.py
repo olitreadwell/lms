@@ -1,10 +1,9 @@
 import json
 
 import frappe
-from frappe.tests.test_api import FrappeAPITestCase
 
 from lms.lms.test_helpers import BaseTestUtils
-from lms.lms.utils import get_lesson
+from lms.lms.utils import get_lesson, get_lesson_creation_details
 
 SECRET_MARKER = "ANSWER-KEY-8f21"
 
@@ -19,30 +18,31 @@ def _editorjs(text):
 	)
 
 
-class TestLessonInstructorContentLeak(BaseTestUtils, FrappeAPITestCase):
+class TestLessonInstructorContentLeak(BaseTestUtils):
 	"""get_lesson must not return instructor-only fields to students or preview guests."""
 
 	SECRET_NOTES = "GRADING-NOTES-be-strict"
 
-	def setUp(self):
-		super().setUp()
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
 		hash = frappe.generate_hash(length=6)
-		self.instructor = self._create_user(
+		cls.instructor = cls._create_user(
 			f"instr-{hash}@example.com", "Ada", "Instr", ["Course Creator", "Moderator"]
 		)
-		self.student = self._create_user(f"stud-{hash}@example.com", "Sam", "Student", ["LMS Student"])
+		cls.student = cls._create_user(f"stud-{hash}@example.com", "Sam", "Student", ["LMS Student"])
 
-		self.course = self._create_course(title=f"Leak Course {hash}", instructor=self.instructor.email)
-		self.chapter = self._create_chapter(f"Chapter {hash}", self.course.name)
-		self.lesson = self._create_lesson(f"Lesson {hash}", self.chapter.name, self.course.name)
+		cls.course = cls._create_course(title=f"Leak Course {hash}", instructor=cls.instructor.email)
+		cls.chapter = cls._create_chapter(f"Chapter {hash}", cls.course.name)
+		cls.lesson = cls._create_lesson(f"Lesson {hash}", cls.chapter.name, cls.course.name)
 		# Preview + instructor-only content (content fields are EditorJS JSON blobs).
-		self.lesson.include_in_preview = 1
-		self.lesson.instructor_content = _editorjs(SECRET_MARKER)
-		self.lesson.instructor_notes = self.SECRET_NOTES
-		self.lesson.save()
-		self._create_chapter_reference(self.course.name, self.chapter.name, idx=1)
-		self._create_lesson_reference(self.chapter.name, self.lesson.name)
-		self._create_enrollment(self.student.email, self.course.name)
+		cls.lesson.include_in_preview = 1
+		cls.lesson.instructor_content = _editorjs(SECRET_MARKER)
+		cls.lesson.instructor_notes = cls.SECRET_NOTES
+		cls.lesson.save()
+		cls._create_chapter_reference(cls.course.name, cls.chapter.name, idx=1)
+		cls._create_lesson_reference(cls.chapter.name, cls.lesson.name)
+		cls._create_enrollment(cls.student.email, cls.course.name)
 
 	def _get(self, user):
 		frappe.session.user = user
@@ -67,3 +67,15 @@ class TestLessonInstructorContentLeak(BaseTestUtils, FrappeAPITestCase):
 		result = self._get(self.instructor.email)
 		self.assertIn(SECRET_MARKER, result.get("instructor_content") or "")
 		self.assertEqual(result.get("instructor_notes"), self.SECRET_NOTES)
+
+	def test_only_the_courses_authors_get_the_lesson_creation_details(self):
+		other = self._create_user(
+			f"other-instr-{frappe.generate_hash(length=6)}@example.com", "Ot", "Her", ["Course Creator"]
+		).email
+		frappe.set_user(other)
+		with self.assertRaises(frappe.PermissionError):
+			get_lesson_creation_details(self.course.name, 1, 1)
+
+		frappe.set_user(self.instructor.email)
+		details = get_lesson_creation_details(self.course.name, 1, 1)
+		self.assertEqual(details["lesson"]["instructor_notes"], self.SECRET_NOTES)
